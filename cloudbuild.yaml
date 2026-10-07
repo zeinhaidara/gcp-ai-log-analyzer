@@ -1,0 +1,33 @@
+# Connect a GitHub push trigger for ^main$ to this file.
+steps:
+  - id: tests-and-source-security
+    name: python:3.12-slim
+    entrypoint: sh
+    args:
+      - -ec
+      - |
+        pip install --no-cache-dir -r requirements.txt bandit pip-audit
+        python -m unittest discover -s tests -v
+        bandit -q app.py
+        pip-audit -r requirements.txt
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID', '.']
+  - id: export-image
+    name: gcr.io/cloud-builders/docker
+    args: ['save', '-o', '/workspace/image.tar', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID']
+  - id: scan-image
+    name: aquasec/trivy:latest
+    entrypoint: trivy
+    args: ['image', '--input', '/workspace/image.tar', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--exit-code', '1']
+  - id: publish
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID']
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID'
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: log-analyzer
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1200s

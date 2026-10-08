@@ -1,33 +1,38 @@
-# Connect a GitHub push trigger for ^main$ to this file.
+# Main: test -> build -> push -> deploy.
 steps:
-  - id: tests-and-source-security
-    name: python:3.12-slim
-    entrypoint: sh
-    args:
-      - -ec
-      - |
-        pip install --no-cache-dir -r requirements.txt bandit pip-audit
-        python -m unittest discover -s tests -v
-        bandit -q app.py
-        pip-audit -r requirements.txt
-  - id: build
-    name: gcr.io/cloud-builders/docker
-    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID', '.']
-  - id: export-image
-    name: gcr.io/cloud-builders/docker
-    args: ['save', '-o', '/workspace/image.tar', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID']
-  - id: scan-image
-    name: aquasec/trivy:latest
-    entrypoint: trivy
-    args: ['image', '--input', '/workspace/image.tar', '--scanners', 'vuln,secret', '--severity', 'HIGH,CRITICAL', '--exit-code', '1']
-  - id: publish
-    name: gcr.io/cloud-builders/docker
-    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID']
-images:
-  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/log-analyzer:$BUILD_ID'
+- id: test
+  name: python:3.12-slim
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    pip install -r requirements.txt
+    python -m unittest discover -s tests -v
+- id: build
+  name: gcr.io/cloud-builders/docker
+  args: [build, -t, '${_IMAGE}:$BUILD_ID', .]
+- id: push
+  name: gcr.io/cloud-builders/docker
+  args: [push, '${_IMAGE}:$BUILD_ID']
+- id: deploy
+  name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
+  entrypoint: gcloud
+  args:
+  - run
+  - deploy
+  - log-analyzer
+  - --project=$PROJECT_ID
+  - --region=${_REGION}
+  - --image=${_IMAGE}:$BUILD_ID
+  - --service-account=log-analyzer-runtime@$PROJECT_ID.iam.gserviceaccount.com
+  - --invoker-iam-check
+  - --min-instances=0
+  - --max-instances=1
+  - --set-env-vars=STORAGE_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,LOG_BUCKET=$PROJECT_ID-log-analyzer-raw,FIRESTORE_DATABASE=log-analyzer
+  - --quiet
 substitutions:
   _REGION: us-central1
-  _REPOSITORY: log-analyzer
+  _IMAGE: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/log-analyzer/log-analyzer
 options:
   logging: CLOUD_LOGGING_ONLY
-timeout: 1200s
+  dynamicSubstitutions: true

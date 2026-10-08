@@ -3,7 +3,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8080 DATABASE_PATH=/app/da
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home appuser && mkdir data && chown appuser:appuser data
-COPY app.py .
+COPY app.py storage.py ./
 COPY static ./static
 USER appuser
 EXPOSE 8080

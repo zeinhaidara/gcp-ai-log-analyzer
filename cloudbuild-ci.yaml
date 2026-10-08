@@ -1,0 +1,15 @@
+# Pull requests: test the app and check that its container builds.
+steps:
+- id: test
+  name: python:3.12-slim
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    pip install -r requirements.txt
+    python -m unittest discover -s tests -v
+- id: build
+  name: gcr.io/cloud-builders/docker
+  args: [build, -t, log-analyzer-ci, .]
+options:
+  logging: CLOUD_LOGGING_ONLY

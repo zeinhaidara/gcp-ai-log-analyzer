@@ -1,6 +1,10 @@
-# Pull requests: test and scan the app, then build and scan its container.
+# Pipeline name: log-analyzer-pr-validation (CI)
+# Automatic trigger: open/update a PR targeting dev or main.
+# Trigger settings live in GCP Cloud Build > Triggers, not this build file.
+# Steps run top to bottom; any failure stops the pipeline.
 steps:
-- id: test
+# 1. Install dependencies, run app tests, and check source/dependency security.
+- id: test-and-audit
   name: python:3.12-slim
   entrypoint: sh
   args:
@@ -10,12 +14,15 @@ steps:
     python -m unittest discover -s tests -v
     bandit -q app.py storage.py
     pip-audit -r requirements.txt --progress-spinner off
-- id: build
+# 2. Build the application container.
+- id: build-image
   name: gcr.io/cloud-builders/docker
   args: [build, -t, log-analyzer-ci, .]
-- id: export-image
+# 3. Export that container so Trivy can inspect it without publishing it.
+- id: prepare-image-scan
   name: gcr.io/cloud-builders/docker
   args: [save, -o, /workspace/image.tar, log-analyzer-ci]
+# 4. Reject HIGH/CRITICAL vulnerabilities or matching secrets.
 - id: scan-image
   name: aquasec/trivy:0.75.0
   entrypoint: trivy

@@ -1,6 +1,10 @@
-# Dev: test and scan -> build and scan image -> push -> deploy.
+# Pipeline name: log-analyzer-dev-push (CD)
+# Automatic trigger: a push or PR merge into dev.
+# Trigger settings live in GCP Cloud Build > Triggers, not this build file.
+# Steps run top to bottom; any failure stops the pipeline.
 steps:
-- id: test
+# 1. Tests and source/dependency security checks.
+- id: test-and-audit
   name: python:3.12-slim
   entrypoint: sh
   args:
@@ -10,20 +14,25 @@ steps:
     python -m unittest discover -s tests -v
     bandit -q app.py storage.py
     pip-audit -r requirements.txt --progress-spinner off
-- id: build
+# 2. Build one uniquely tagged application container.
+- id: build-image
   name: gcr.io/cloud-builders/docker
   args: [build, -t, '${_IMAGE}:$BUILD_ID', .]
-- id: export-image
+# 3. Export that same container for scanning.
+- id: prepare-image-scan
   name: gcr.io/cloud-builders/docker
   args: [save, -o, /workspace/image.tar, '${_IMAGE}:$BUILD_ID']
+# 4. Reject vulnerable images or matching secrets before publication.
 - id: scan-image
   name: aquasec/trivy:0.75.0
   entrypoint: trivy
   args: [image, --input, /workspace/image.tar, --scanners, 'vuln,secret', --severity, 'HIGH,CRITICAL', --exit-code, '1', --timeout, 10m]
-- id: push
+# 5. Publish the scanned image to Artifact Registry.
+- id: publish-image
   name: gcr.io/cloud-builders/docker
   args: [push, '${_IMAGE}:$BUILD_ID']
-- id: deploy
+# 6. Deploy that same image to Cloud Run with the existing runtime identity.
+- id: deploy-dev
   name: gcr.io/google.com/cloudsdktool/google-cloud-cli:stable
   entrypoint: gcloud
   args:
@@ -41,6 +50,7 @@ steps:
   - --update-labels=${_LABELS}
   - --set-env-vars=STORAGE_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,LOG_BUCKET=${_LOG_BUCKET},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},FIRESTORE_COLLECTION=${_FIRESTORE_COLLECTION}
   - --quiet
+# Configurable resource settings; these are not credentials.
 substitutions:
   _REGION: us-central1
   _REPOSITORY: log-analyzer-dev

@@ -1,160 +1,81 @@
 # GCP AI Log Analyzer
 
-AI log analyzer and incident investigation agent built in phases with Google ADK and Gemini on Vertex AI, Cloud Run, Firestore, Cloud Storage, Pub/Sub, and BigQuery. GitHub hosts the source; Cloud Build tests, scans, and publishes container images to Artifact Registry.
+A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. AI investigation is future work.
 
-## Working today
-
-- Browser dashboard: upload UTF-8 `.txt` files and view recent logs and content.
-- UTC upload timestamps, processing status, and ERROR/WARN line counts.
-- Input validation, parameterized database queries, safe text rendering, and a 1 MiB request limit.
-- SQLite storage for the local learning phase, a health endpoint, and a non-root Docker image.
-- Cloud Build pipeline with API tests, Bandit source checks, pip-audit dependency checks, and Trivy image vulnerability/secret scanning.
-
-ADK, Gemini, Firestore, Cloud Storage, Pub/Sub, and BigQuery are planned integrations, not implemented yet. The current analysis counts lines containing ERROR or WARN; it does not infer incident causes.
-
-## PLANNED architecture
-
-Cloud integrations and the ADK agent below have not been implemented. Docker builds, security scans, and GCP execution remain unverified.
+## The flow
 
 ```mermaid
-flowchart TB
-    subgraph deployment["Deployment (planned)"]
-        direction LR
-        github["GitHub"] --> build["Cloud Build: tests + scans"]
-        build --> registry["Artifact Registry: images"]
-        registry --> runtime["Cloud Run: dashboard/API"]
-    end
-
-    subgraph application["Application processing (planned)"]
-        direction TB
-        user["User uploads log"] --> api["Cloud Run: dashboard/API"]
-        api -->|raw logs| storage["Cloud Storage: raw logs"]
-        api -->|metadata + findings| firestore["Firestore"]
-        firestore -->|results through API| api
-        api --> pubsub["Pub/Sub: investigation request"]
-        pubsub --> agent["Cloud Run: ADK agent"]
-        storage -->|retrieve logs| agent
-        agent <-->|model calls| gemini["Gemini on Vertex AI"]
-        agent -->|investigation results| firestore
-        agent --> analytics["BigQuery: incident analytics"]
-    end
+flowchart LR
+    GitHub -->|triggers| Build[Cloud Build]
+    Build -->|pushes container| Registry[Artifact Registry]
+    Build -->|deploys container| Run[Cloud Run app]
+    Registry -->|container image| Run
+    Run -->|raw log files| Storage[Cloud Storage]
+    Run -->|upload metadata| Firestore
 ```
 
-- ADK is the agent framework.
-- Gemini is the model accessed through Vertex AI.
-- Artifact Registry stores Docker images; Cloud Run runs them.
-- Current persistence is SQLite; Firestore and Cloud Storage are planned.
+Infrastructure means the repository, running service, bucket, database, and permissions connecting them. Create these once in GCP; the pipeline updates the app when code changes.
 
-## Local run (PowerShell)
+## Two pipeline files
 
-With Python 3.12 installed:
+| File | GitHub event | Steps |
+| --- | --- | --- |
+| `cloudbuild-ci.yaml` | Pull request into `dev` or `main` | Tests and security checks → build → scan image |
+| `cloudbuild.yaml` | Push to `dev` | Same checks → push → deploy development app |
+
+A failed step stops the pipeline. Bandit checks source, pip-audit checks dependencies, and Trivy rejects HIGH/CRITICAL image vulnerabilities or detected secrets before publication. The scanned image is the one pushed and deployed. Each deployment uses its own image tag. Cloud Run scales to zero when idle, with one maximum instance per revision configured. Releases deploy directly. This follows Google's [Cloud Build → Cloud Run example](https://docs.cloud.google.com/build/docs/deploying-builds/deploy-cloud-run).
+
+## GCP connection
+
+Project: **`ai-log-analyzer-511017`**. Region: **`us-central1`**. We reuse Zein's resources:
+
+The [scanned deployment build](https://console.cloud.google.com/cloud-build/builds;region=us-central1/3f72cdbc-7983-4f82-bad4-3b3a298b56e8?project=ai-log-analyzer-511017) succeeded on 2026-10-08 using the linked GitHub repository. Tests, Bandit, pip-audit, and Trivy passed before publication. An authenticated synthetic upload verified Cloud Run → Firestore → Storage, an earlier upload persisted, and anonymous access returned HTTP 403. The container uses a small Alpine base because scanning blocked the Debian base's HIGH/CRITICAL findings.
+
+| Resource | Name |
+| --- | --- |
+| Container repository | `log-analyzer-dev` |
+| Cloud Run service | `log-analyzer-dev` |
+| Private log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
+| Firestore database / collection | `(default)` / `logs` |
+
+| Existing account | Purpose |
+| --- | --- |
+| `log-analyzer-dev-ci` | PR tests and container build; Logs Writer only |
+| `log-analyzer-dev-build` | Releases; Logs Writer, Cloud Run Developer, repository Writer, and Service Account User on the dashboard account |
+| `log-analyzer-dev-dashboard` | Running app; existing Firestore access and Object User on the private bucket |
+
+Zein's host connection `github-log-analyzer` is authorized and linked to this repository in `us-central1`. We reuse it and the existing triggers:
+
+| Trigger | Event | Config | Service account |
+| --- | --- | --- | --- |
+| `log-analyzer-pr-validation` (enabled) | PR into `dev` or `main` | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
+| `log-analyzer-dev-push` (paused until merge) | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
+
+Work on personal feature branches based on `dev`; open a PR into `dev`, then promote reviewed changes from `dev` into protected `main`. No force-pushes. The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge the corrected YAML into `dev` before enabling its deployment trigger. A production target and trigger are future work.
+
+After the reviewed PR is merged into `dev`, enable `log-analyzer-dev-push` in Cloud Build → Triggers and run it once for `dev`. Subsequent pushes/merges to `dev` deploy automatically. Pipeline names, events, branches, and build identities live in those GCP trigger settings; each YAML's `steps` contains the ordered commands. Google Cloud Build does not use a `tasks` field.
+
+Before review/merge, you can validate the same release pipeline manually from your checked-out branch:
+
+```powershell
+gcloud builds submit https://github.com/zeinhaidara/gcp-ai-log-analyzer.git --git-source-revision=mahmoud/simplify-gcp-pipelines --config=cloudbuild.yaml --region=us-central1 --project=ai-log-analyzer-511017 --service-account=projects/ai-log-analyzer-511017/serviceAccounts/log-analyzer-dev-build@ai-log-analyzer-511017.iam.gserviceaccount.com
+```
+
+The app uses its attached service account automatically; no JSON keys or GitHub GCP secrets are needed. CI and release accounts remain separate. The dashboard currently has project-wide Firestore access and bucket Object User; Zein can later limit it to the default database and Object Creator + Viewer, and scope release access to this Cloud Run service after its first deployment.
+
+Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_IMAGE`, `_SERVICE`, `_RUNTIME_SERVICE_ACCOUNT`, `_LOG_BUCKET`, `_FIRESTORE_DATABASE`, `_FIRESTORE_COLLECTION`, and `_MAX_INSTANCES`. `_REPOSITORY` supplies the default image path. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
+
+The deployed app requires GCP authentication. For local access, run `gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+
+## Run locally
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-Gunicorn runs in the Linux container. For local Windows development, start the standard-library WSGI server:
-
-```powershell
 python -c "from wsgiref.simple_server import make_server; from app import application; make_server('127.0.0.1', 8080, application).serve_forever()"
 ```
 
-Open http://localhost:8080. Records are stored in `data/logs.db`. Set `DATABASE_PATH` to change this location.
+Open `http://localhost:8080`. Local uploads use SQLite at `data/logs.db`; Cloud Run uses Storage and Firestore through `storage.py`.
 
-Alternatively, run the container with a persistent local volume:
-
-```powershell
-docker build -t log-analyzer .
-docker run --rm -p 8080:8080 -v log-analyzer-data:/app/data log-analyzer
-```
-
-## API
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /health` | Health check |
-| `POST /logs` | JSON body: `filename` and `content` |
-| `GET /logs` | Latest 100 records, excluding raw content |
-| `GET /logs/{id}` | Record and full content |
-
-```powershell
-$body = @{ filename = 'api.txt'; content = "ERROR database timeout`nWARN retrying" } | ConvertTo-Json
-Invoke-RestMethod http://localhost:8080/logs -Method Post -ContentType 'application/json' -Body $body
-```
-
-## Test and security checks
-
-```powershell
-python -m unittest discover -s tests -v
-pip install bandit pip-audit
-bandit -q app.py
-pip-audit -r requirements.txt
-```
-
-## Cloud Build: CI and image publication
-
-```text
-GitHub push to main
-  -> API tests -> Bandit -> pip-audit
-  -> Docker build -> Trivy image scan
-  -> Artifact Registry (unique BUILD_ID tag)
-```
-
-Every step must succeed before publishing. Trivy blocks HIGH and CRITICAL vulnerabilities and matching secret findings, including vulnerabilities without available fixes. No failure is ignored. The image is exported to a tar file so the scanner can inspect it before it is pushed. Scanner images and audit tools currently use current releases for simplicity; pin tested versions/digests and lock dependencies when hardening the pipeline.
-
-Use **Artifact Registry**, Google's current container image registry. Publishing an image is artifact delivery; deploying a Cloud Run revision is the next CD step.
-
-### One-time GCP setup
-
-Install the Google Cloud CLI, sign in, and use a billing-enabled project. Replace `YOUR_PROJECT_ID`:
-
-```powershell
-$projectId = 'YOUR_PROJECT_ID'
-$region = 'us-central1'
-gcloud auth login
-gcloud config set project $projectId
-gcloud services enable cloudbuild.googleapis.com artifactregistry.googleapis.com logging.googleapis.com run.googleapis.com
-gcloud artifacts repositories create log-analyzer --repository-format=docker --location=$region
-gcloud iam service-accounts create log-analyzer-build --display-name='Log Analyzer Cloud Build'
-$buildAccount = "log-analyzer-build@$projectId.iam.gserviceaccount.com"
-gcloud artifacts repositories add-iam-policy-binding log-analyzer --location=$region --member="serviceAccount:$buildAccount" --role=roles/artifactregistry.writer
-gcloud projects add-iam-policy-binding $projectId --member="serviceAccount:$buildAccount" --role=roles/logging.logWriter
-```
-
-In **Cloud Build > Repositories**, connect this GitHub repository. Create a push trigger for branch `^main$`, select `cloudbuild.yaml`, and select the `log-analyzer-build` service account. The person creating the trigger needs permission to act as that account. Cloud Build API/service-agent permissions and organization policies must also allow builds. Limit the trigger to trusted branches; PR validation should use a separate pipeline without publishing credentials.
-
-For a manual build, source staging also needs storage permissions. Use a dedicated bucket:
-
-```powershell
-$sourceBucket = "$projectId-log-analyzer-build-source"
-gcloud storage buckets create "gs://$sourceBucket" --location=$region --uniform-bucket-level-access
-gcloud storage buckets add-iam-policy-binding "gs://$sourceBucket" --member="serviceAccount:$buildAccount" --role=roles/storage.objectViewer
-gcloud builds submit --config=cloudbuild.yaml --region=$region --gcs-source-staging-dir="gs://$sourceBucket/source" --service-account="projects/$projectId/serviceAccounts/$buildAccount"
-```
-
-The submitting user needs build creation, source upload, and service-account impersonation permissions. Successful builds publish:
-
-```text
-us-central1-docker.pkg.dev/PROJECT_ID/log-analyzer/log-analyzer:BUILD_ID
-```
-
-## Next layers
-
-1. **Persistent cloud storage:** Firestore metadata and Cloud Storage raw files. SQLite on Cloud Run is ephemeral and cannot coordinate multiple instances; complete this before a persistent cloud deployment.
-2. **Cloud Run CD:** deploy the scanned image after publishing, using a dedicated runtime service account, then check `/health`. Add narrowly scoped deployment and service-account permissions to the build account.
-3. **Pub/Sub processing:** asynchronous jobs with idempotency, retries, and a dead-letter queue.
-4. **ADK investigation agent:** Gemini through Vertex AI, with tools to read a log, find related logs, and look up runbooks. Save evidence and suggested checks in Firestore.
-5. **BigQuery:** historical severity/error trends and an additional read-only agent investigation tool.
-6. **Access and operations:** authentication before real log uploads, Secret Manager for external credentials, Cloud Logging/Monitoring and failure alerts.
-7. **Networking lab:** add a private processing VM and VPC connectivity only when that learning phase needs them.
-
-Treat uploaded logs as untrusted input, including when adding agent tools. The agent should initially investigate with read-only permissions. This demo has no authentication; use synthetic logs during development.
-
-## References
-
-- [Cloud Build container builds and publication](https://docs.cloud.google.com/build/docs/building/build-containers)
-- [Gemini on Vertex AI](https://docs.cloud.google.com/vertex-ai/generative-ai/docs)
-- [Google ADK](https://google.github.io/adk-docs/)
-- [Trivy image scanning](https://trivy.dev/docs/dev/references/configuration/cli/trivy_image/)
+Run tests with `python -m unittest discover -s tests -v`.

@@ -20,10 +20,10 @@ Infrastructure means the repository, running service, bucket, database, and perm
 
 | File | GitHub event | Steps |
 | --- | --- | --- |
-| `cloudbuild-ci.yaml` | Pull request into `main` | Test → build container |
-| `cloudbuild.yaml` | Push to `main` | Test → build → push → deploy |
+| `cloudbuild-ci.yaml` | Pull request into `dev` or `main` | Tests and security checks → build → scan image |
+| `cloudbuild.yaml` | Push to `dev` | Same checks → push → deploy development app |
 
-A failed step stops the pipeline. Each deployment uses its own image tag. Cloud Run scales to zero when idle, with a maximum of one instance configured. Releases deploy directly; there are no custom rollout scripts or automatic rollback checks. This follows Google's [Cloud Build → Cloud Run example](https://docs.cloud.google.com/build/docs/deploying-builds/deploy-cloud-run).
+A failed step stops the pipeline. Bandit checks source, pip-audit checks dependencies, and Trivy rejects HIGH/CRITICAL image vulnerabilities or detected secrets before publication. The scanned image is the one pushed and deployed. Each deployment uses its own image tag. Cloud Run scales to zero when idle, with one maximum instance per revision configured. Releases deploy directly. This follows Google's [Cloud Build → Cloud Run example](https://docs.cloud.google.com/build/docs/deploying-builds/deploy-cloud-run).
 
 ## GCP connection
 
@@ -34,7 +34,7 @@ The [manual pipeline run](https://console.cloud.google.com/cloud-build/builds;re
 | Resource | Name |
 | --- | --- |
 | Container repository | `log-analyzer-dev` |
-| Cloud Run service | `log-analyzer-dev-dashboard` |
+| Cloud Run service | `log-analyzer-dev` |
 | Private log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
 | Firestore database / collection | `(default)` / `logs` |
 
@@ -44,14 +44,14 @@ The [manual pipeline run](https://console.cloud.google.com/cloud-build/builds;re
 | `log-analyzer-dev-build` | Releases; Logs Writer, Cloud Run Developer, repository Writer, and Service Account User on the dashboard account |
 | `log-analyzer-dev-dashboard` | Running app; existing Firestore access and Object User on the private bucket |
 
-The GitHub connection attempt failed because the Cloud Build service agent lacks `secretmanager.secrets.create` and `secretmanager.secrets.setIamPolicy`. Your Editor account cannot grant project IAM. Zein/admin must complete the [GitHub host connection](https://docs.cloud.google.com/build/docs/automating-builds/github/connect-repo-github), authorizing only this repository, then create two triggers in `us-central1` with branch pattern `^main$`:
+Host connection `log-analyzer-github` has been created in `us-central1` using Zein's time-limited setup grant. Browser authorization of the [Cloud Build GitHub App](https://docs.cloud.google.com/build/docs/automating-builds/github/connect-repo-github) is pending. Link only this repository, then configure these triggers:
 
 | Trigger | Event | Config | Service account |
 | --- | --- | --- | --- |
-| `log-analyzer-pr` | Pull request | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
-| `log-analyzer-main` | Push | `cloudbuild.yaml` | `log-analyzer-dev-build` |
+| `log-analyzer-pr-validation` | PR into `dev` or `main` | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
+| `log-analyzer-dev-push` | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
 
-The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge this branch through a PR before enabling releases from `main`.
+Work on personal feature branches based on `dev`; open a PR into `dev`, then promote reviewed changes from `dev` into protected `main`. No force-pushes. The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge the corrected YAML into `dev` before enabling its deployment trigger. A production target and trigger are future work.
 
 Until the repository is linked, you can run the same release pipeline manually from your checked-out branch:
 
@@ -61,9 +61,9 @@ gcloud builds submit https://github.com/zeinhaidara/gcp-ai-log-analyzer.git --gi
 
 The app uses its attached service account automatically; no JSON keys or GitHub GCP secrets are needed. CI and release accounts remain separate. The dashboard currently has project-wide Firestore access and bucket Object User; Zein can later limit it to the default database and Object Creator + Viewer, and scope release access to this Cloud Run service after its first deployment.
 
-Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_REPOSITORY`, `_SERVICE`, `_RUNTIME_ACCOUNT`, `_LOG_BUCKET`, `_DATABASE`, `_COLLECTION`, and `_MAX_INSTANCES`. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
+Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_IMAGE`, `_SERVICE`, `_RUNTIME_SERVICE_ACCOUNT`, `_LOG_BUCKET`, `_FIRESTORE_DATABASE`, `_FIRESTORE_COLLECTION`, and `_MAX_INSTANCES`. `_REPOSITORY` supplies the default image path. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
 
-The deployed app requires GCP authentication. For local access, run `gcloud run services proxy log-analyzer-dev-dashboard --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+The deployed app requires GCP authentication. For local access, run `gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
 
 ## Run locally
 

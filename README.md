@@ -12,6 +12,39 @@ AI log analyzer and incident investigation agent built in phases with Google ADK
 
 ADK, Gemini, Firestore, Cloud Storage, Pub/Sub, and BigQuery are planned integrations, not implemented yet. The current analysis counts lines containing ERROR or WARN; it does not infer incident causes.
 
+## PLANNED architecture
+
+Cloud integrations and the ADK agent below have not been implemented. Docker builds, security scans, and GCP execution remain unverified.
+
+```mermaid
+flowchart TB
+    subgraph deployment["Deployment (planned)"]
+        direction LR
+        github["GitHub"] --> build["Cloud Build: tests + scans"]
+        build --> registry["Artifact Registry: images"]
+        registry --> runtime["Cloud Run: dashboard/API"]
+    end
+
+    subgraph application["Application processing (planned)"]
+        direction TB
+        user["User uploads log"] --> api["Cloud Run: dashboard/API"]
+        api -->|raw logs| storage["Cloud Storage: raw logs"]
+        api -->|metadata + findings| firestore["Firestore"]
+        firestore -->|results through API| api
+        api --> pubsub["Pub/Sub: investigation request"]
+        pubsub --> agent["Cloud Run: ADK agent"]
+        storage -->|retrieve logs| agent
+        agent <-->|model calls| gemini["Gemini on Vertex AI"]
+        agent -->|investigation results| firestore
+        agent --> analytics["BigQuery: incident analytics"]
+    end
+```
+
+- ADK is the agent framework.
+- Gemini is the model accessed through Vertex AI.
+- Artifact Registry stores Docker images; Cloud Run runs them.
+- Current persistence is SQLite; Firestore and Cloud Storage are planned.
+
 ## Local run (PowerShell)
 
 With Python 3.12 installed:

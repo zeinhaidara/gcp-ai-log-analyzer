@@ -25,32 +25,45 @@ Infrastructure means the repository, running service, bucket, database, and perm
 
 A failed step stops the pipeline. Each deployment uses its own image tag. Cloud Run scales to zero when idle, with a maximum of one instance configured. Releases deploy directly; there are no custom rollout scripts or automatic rollback checks. This follows Google's [Cloud Build → Cloud Run example](https://docs.cloud.google.com/build/docs/deploying-builds/deploy-cloud-run).
 
-## One-time GCP setup
+## GCP connection
 
-Project: **`ai-log-analyzer-511017`**. Region: **`us-central1`**. Cloud resources and triggers are **not activated yet**. Your account has Editor; Zein/admin needs to grant the permissions below.
+Project: **`ai-log-analyzer-511017`**. Region: **`us-central1`**. We reuse Zein's resources:
 
-1. Enable Cloud Build, Artifact Registry, Cloud Run, Firestore, Cloud Storage, Cloud Logging, IAM, Secret Manager, and Cloud Resource Manager APIs.
-2. Create a Docker Artifact Registry repository named `log-analyzer` in `us-central1`.
-3. Create the private bucket `ai-log-analyzer-511017-log-analyzer-raw` in `us-central1`, with uniform bucket access and public access prevention.
-4. Create a Firestore Native database named `log-analyzer` in `us-central1`.
-5. Create these service accounts and grant their roles:
+The [manual pipeline run](https://console.cloud.google.com/cloud-build/builds;region=us-central1/b40a64cc-ce7f-463d-ba8c-8e1dd7d9daa4?project=ai-log-analyzer-511017) succeeded on 2026-10-08. An authenticated synthetic upload verified Cloud Run → Firestore → Storage; anonymous access returned HTTP 403. The app is deployed; automatic GitHub triggering is still pending.
 
-| Account | Permissions |
+| Resource | Name |
 | --- | --- |
-| `log-analyzer-ci` | Logs Writer |
-| `log-analyzer-build` | Logs Writer; Cloud Run Developer; Artifact Registry Writer on the `log-analyzer` repository; Service Account User on `log-analyzer-runtime` |
-| `log-analyzer-runtime` | Datastore User scoped to the `log-analyzer` database; Storage Object Creator and Storage Object Viewer on the log bucket |
+| Container repository | `log-analyzer-dev` |
+| Cloud Run service | `log-analyzer-dev-dashboard` |
+| Private log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
+| Firestore database / collection | `(default)` / `logs` |
 
-6. In Cloud Build → Repositories, connect `zeinhaidara/gcp-ai-log-analyzer` through the GitHub App. Create two triggers in `us-central1`, using branch pattern `^main$`:
+| Existing account | Purpose |
+| --- | --- |
+| `log-analyzer-dev-ci` | PR tests and container build; Logs Writer only |
+| `log-analyzer-dev-build` | Releases; Logs Writer, Cloud Run Developer, repository Writer, and Service Account User on the dashboard account |
+| `log-analyzer-dev-dashboard` | Running app; existing Firestore access and Object User on the private bucket |
+
+The GitHub connection attempt failed because the Cloud Build service agent lacks `secretmanager.secrets.create` and `secretmanager.secrets.setIamPolicy`. Your Editor account cannot grant project IAM. Zein/admin must complete the [GitHub host connection](https://docs.cloud.google.com/build/docs/automating-builds/github/connect-repo-github), authorizing only this repository, then create two triggers in `us-central1` with branch pattern `^main$`:
 
 | Trigger | Event | Config | Service account |
 | --- | --- | --- | --- |
-| `log-analyzer-pr` | Pull request | `cloudbuild-ci.yaml` | `log-analyzer-ci` |
-| `log-analyzer-main` | Push | `cloudbuild.yaml` | `log-analyzer-build` |
+| `log-analyzer-pr` | Pull request | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
+| `log-analyzer-main` | Push | `cloudbuild.yaml` | `log-analyzer-dev-build` |
 
-The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. After setup, run the main trigger and watch its four steps in Cloud Build.
+The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge this branch through a PR before enabling releases from `main`.
 
-The deployed app requires GCP authentication. For local access to the private service, run `gcloud run services proxy log-analyzer --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+Until the repository is linked, you can run the same release pipeline manually from your checked-out branch:
+
+```powershell
+gcloud builds submit https://github.com/zeinhaidara/gcp-ai-log-analyzer.git --git-source-revision=mahmoud/simplify-gcp-pipelines --config=cloudbuild.yaml --region=us-central1 --project=ai-log-analyzer-511017 --service-account=projects/ai-log-analyzer-511017/serviceAccounts/log-analyzer-dev-build@ai-log-analyzer-511017.iam.gserviceaccount.com
+```
+
+The app uses its attached service account automatically; no JSON keys or GitHub GCP secrets are needed. CI and release accounts remain separate. The dashboard currently has project-wide Firestore access and bucket Object User; Zein can later limit it to the default database and Object Creator + Viewer, and scope release access to this Cloud Run service after its first deployment.
+
+Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_REPOSITORY`, `_SERVICE`, `_RUNTIME_ACCOUNT`, `_LOG_BUCKET`, `_DATABASE`, `_COLLECTION`, and `_MAX_INSTANCES`. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
+
+The deployed app requires GCP authentication. For local access, run `gcloud run services proxy log-analyzer-dev-dashboard --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
 
 ## Run locally
 

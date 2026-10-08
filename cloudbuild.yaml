@@ -38,6 +38,7 @@ steps:
   - --memory=512Mi
   - --min-instances=0
   - --max-instances=${_MAX_INSTANCES}
+  - --update-labels=${_LABELS}
   - --set-env-vars=STORAGE_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,LOG_BUCKET=${_LOG_BUCKET},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},FIRESTORE_COLLECTION=${_FIRESTORE_COLLECTION}
   - --quiet
 substitutions:
@@ -50,6 +51,8 @@ substitutions:
   _FIRESTORE_DATABASE: (default)
   _FIRESTORE_COLLECTION: logs
   _MAX_INSTANCES: '1'
+  _LABELS: app=log-analyzer,environment=dev,owner=mahmoud,managed-by=cloud-build
+tags: [log-analyzer, dev, mahmoud]
 options:
   logging: CLOUD_LOGGING_ONLY
   dynamicSubstitutions: true

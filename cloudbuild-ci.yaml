@@ -20,5 +20,6 @@ steps:
   name: aquasec/trivy:0.75.0
   entrypoint: trivy
   args: [image, --input, /workspace/image.tar, --scanners, 'vuln,secret', --severity, 'HIGH,CRITICAL', --exit-code, '1', --timeout, 10m]
+tags: [log-analyzer, ci, mahmoud]
 options:
   logging: CLOUD_LOGGING_ONLY

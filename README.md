@@ -29,7 +29,7 @@ A failed step stops the pipeline. Bandit checks source, pip-audit checks depende
 
 Project: **`ai-log-analyzer-511017`**. Region: **`us-central1`**. We reuse Zein's resources:
 
-The [initial manual pipeline run](https://console.cloud.google.com/cloud-build/builds;region=us-central1/b40a64cc-ce7f-463d-ba8c-8e1dd7d9daa4?project=ai-log-analyzer-511017) succeeded on 2026-10-08. An authenticated synthetic upload verified Cloud Run → Firestore → Storage; anonymous access returned HTTP 403. The handoff's security gates were restored afterward; scan and deployment validation for that configuration is in progress.
+The [scanned deployment build](https://console.cloud.google.com/cloud-build/builds;region=us-central1/3f72cdbc-7983-4f82-bad4-3b3a298b56e8?project=ai-log-analyzer-511017) succeeded on 2026-10-08 using the linked GitHub repository. Tests, Bandit, pip-audit, and Trivy passed before publication. An authenticated synthetic upload verified Cloud Run → Firestore → Storage, an earlier upload persisted, and anonymous access returned HTTP 403. The container uses a small Alpine base because scanning blocked the Debian base's HIGH/CRITICAL findings.
 
 | Resource | Name |
 | --- | --- |
@@ -52,6 +52,8 @@ Zein's host connection `github-log-analyzer` is authorized and linked to this re
 | `log-analyzer-dev-push` (paused until merge) | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
 
 Work on personal feature branches based on `dev`; open a PR into `dev`, then promote reviewed changes from `dev` into protected `main`. No force-pushes. The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge the corrected YAML into `dev` before enabling its deployment trigger. A production target and trigger are future work.
+
+After the reviewed PR is merged into `dev`, enable `log-analyzer-dev-push` in Cloud Build → Triggers and run it once for `dev`. Subsequent pushes/merges to `dev` deploy automatically. Pipeline names, events, branches, and build identities live in those GCP trigger settings; each YAML's `steps` contains the ordered commands. Google Cloud Build does not use a `tasks` field.
 
 Before review/merge, you can validate the same release pipeline manually from your checked-out branch:
 

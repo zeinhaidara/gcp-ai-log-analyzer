@@ -1,6 +1,6 @@
 # GCP AI Log Analyzer
 
-A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. AI investigation is future work.
+A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. A separate [ADK investigation service](agent_service/README.md) analyzes logs with Gemini and exports findings to Firestore and BigQuery. Automatic publishing and displaying findings in the dashboard remain app integration work.
 
 ## The flow
 

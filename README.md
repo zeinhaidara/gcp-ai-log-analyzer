@@ -10,7 +10,7 @@ AI log analyzer and incident investigation agent built in phases with Google ADK
 - SQLite storage for the local learning phase, a health endpoint, and a non-root Docker image.
 - Cloud Build pipeline with API tests, Bandit source checks, pip-audit dependency checks, and Trivy image vulnerability/secret scanning.
 
-ADK, Gemini, Firestore, Cloud Storage, Pub/Sub, and BigQuery are planned integrations, not implemented yet. The current analysis counts lines containing ERROR or WARN; it does not infer incident causes.
+The dashboard on this branch uses SQLite and counts ERROR/WARN lines. The separate [ADK investigation service](agent_service/README.md) implements Pub/Sub processing, Gemini analysis, Firestore findings, and BigQuery export. Its deployment and dashboard integration are tracked separately; the architecture below describes the complete target flow.
 
 ## PLANNED architecture
 

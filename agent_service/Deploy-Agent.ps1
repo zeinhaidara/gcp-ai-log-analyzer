@@ -1,6 +1,8 @@
 param([string]$Tag = 'dev', [string]$Model = 'gemini-3.1-flash-lite')
 $ErrorActionPreference = 'Stop'
-$gcpCli = (Get-Command gcloud.cmd -ErrorAction Stop).Source
+$gcpCli = (Get-Command gcloud.cmd -ErrorAction SilentlyContinue).Source
+if (!$gcpCli) { $gcpCli = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd' }
+if (!(Test-Path -LiteralPath $gcpCli)) { throw 'Install Google Cloud SDK first' }
 $sdkBin = Split-Path $gcpCli
 $env:PATH = "$sdkBin;$env:PATH"
 $project = 'ai-log-analyzer-511017'

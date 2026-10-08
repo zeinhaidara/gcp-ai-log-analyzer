@@ -1,6 +1,8 @@
 param([string]$Dashboard = 'log-analyzer-dev')
 $ErrorActionPreference = 'Stop'
-$gcpCli = (Get-Command gcloud.cmd -ErrorAction Stop).Source
+$gcpCli = (Get-Command gcloud.cmd -ErrorAction SilentlyContinue).Source
+if (!$gcpCli) { $gcpCli = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd' }
+if (!(Test-Path -LiteralPath $gcpCli)) { throw 'Install Google Cloud SDK first' }
 $project = 'ai-log-analyzer-511017'
 $region = 'us-central1'
 $baseUrl = & $gcpCli run services describe $Dashboard --project=$project --region=$region --format='value(status.url)'

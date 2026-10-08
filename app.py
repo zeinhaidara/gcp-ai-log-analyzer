@@ -1,20 +1,16 @@
-"""Small WSGI log dashboard. Cloud integrations are added in later phases."""
+"""WSGI log dashboard with local or persistent GCP storage."""
 import json
-import os
-import sqlite3
+import logging
 import uuid
 from datetime import datetime, timezone
-from contextlib import closing
 from pathlib import Path
+from storage import StorageUnavailable, create_store
 
 MAX_BODY = 1024 * 1024
 
 
-def create_app(database=None):
-    database = database or os.environ.get("DATABASE_PATH", "data/logs.db")
-    Path(database).parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(database)) as db, db:
-        db.execute("CREATE TABLE IF NOT EXISTS logs (id TEXT PRIMARY KEY, filename TEXT, timestamp TEXT, status TEXT, content TEXT, error_count INTEGER, warning_count INTEGER)")
+def create_app(database=None, store=None):
+    store = store if store is not None else create_store(database)
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
@@ -42,23 +38,37 @@ def create_app(database=None):
                     raise ValueError()
                 if not isinstance(content, str) or not content.strip() or "\x00" in content:
                     raise ValueError()
-            except (ValueError, UnicodeDecodeError):
+                content.encode("utf-8")
+            except (ValueError, UnicodeError):
                 return respond(start_response, "400 Bad Request", {"error": "Provide a plain .txt filename and nonempty UTF-8 content."})
             record = {"id": str(uuid.uuid4()), "filename": filename, "timestamp": datetime.now(timezone.utc).isoformat(), "status": "processed", "content": content, "error_count": sum("ERROR" in line.upper() for line in content.splitlines()), "warning_count": sum("WARN" in line.upper() for line in content.splitlines())}
-            with closing(sqlite3.connect(database)) as db, db:
-                db.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?)", tuple(record.values()))
+            try:
+                store.save(record)
+            except StorageUnavailable:
+                return unavailable(start_response)
             return respond(start_response, "201 Created", record)
         if method == "GET" and (path == "/logs" or path.startswith("/logs/")):
-            with closing(sqlite3.connect(database)) as db, db:
-                db.row_factory = sqlite3.Row
+            try:
                 if path == "/logs":
-                    records = db.execute("SELECT id, filename, timestamp, status, error_count, warning_count FROM logs ORDER BY timestamp DESC LIMIT 100").fetchall()
-                    return respond(start_response, "200 OK", [dict(row) for row in records])
-                row = db.execute("SELECT * FROM logs WHERE id = ?", (path.removeprefix("/logs/"),)).fetchone()
-                if row:
-                    return respond(start_response, "200 OK", dict(row))
+                    return respond(start_response, "200 OK", store.list_recent())
+                log_id = path.removeprefix("/logs/")
+                try:
+                    if str(uuid.UUID(log_id)) != log_id:
+                        raise ValueError()
+                except ValueError:
+                    return respond(start_response, "404 Not Found", {"error": "Log not found."})
+                record = store.get(log_id)
+                if record:
+                    return respond(start_response, "200 OK", record)
+            except StorageUnavailable:
+                return unavailable(start_response)
             return respond(start_response, "404 Not Found", {"error": "Log not found."})
         return respond(start_response, "404 Not Found", {"error": "Route not found."})
+
+    def unavailable(start_response):
+        # Do not log exception text: provider errors can include sensitive data.
+        logging.getLogger(__name__).error("Log storage operation failed")
+        return respond(start_response, "503 Service Unavailable", {"error": "Log storage is temporarily unavailable. Check recent logs before retrying an upload."})
 
     return application
 

@@ -3,7 +3,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 from app import create_app
+from storage import StorageUnavailable
 
 
 class AppTests(unittest.TestCase):
@@ -30,6 +32,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual((log["error_count"], log["warning_count"]), (1, 1))
         self.app = create_app(self.database)
         self.assertEqual(self.request("/logs")[1][0]["id"], log["id"])
+        self.assertNotIn("content", self.request("/logs")[1][0])
         self.assertEqual(self.request("/logs/" + log["id"])[1]["content"], log["content"])
 
     def test_reject_invalid_uploads(self):
@@ -38,12 +41,36 @@ class AppTests(unittest.TestCase):
                 self.assertEqual(self.request("/logs", "POST", payload)[0], "400 Bad Request")
         self.assertEqual(self.request("/logs", "POST", raw=b"invalid")[0], "400 Bad Request")
         self.assertEqual(self.request("/logs", "POST", raw=b"\xff")[0], "400 Bad Request")
+        self.assertEqual(self.request("/logs", "POST", {"filename": "a.txt", "content": "\ud800"})[0], "400 Bad Request")
 
     def test_size_limit(self):
         self.assertEqual(self.request("/logs", "POST", raw=b"x", length=1048577)[0], "413 Payload Too Large")
 
     def test_missing_log(self):
         self.assertEqual(self.request("/logs/missing")[0], "404 Not Found")
+
+    def test_storage_failures_return_safe_503_and_health_stays_available(self):
+        store = Mock()
+        for operation in (store.save, store.list_recent, store.get):
+            operation.side_effect = StorageUnavailable("private content or credentials")
+        self.app = create_app(store=store)
+        cases = [("/logs", "POST", {"filename": "a.txt", "content": "ERROR test"}),
+                 ("/logs", "GET", None),
+                 ("/logs/00000000-0000-4000-8000-000000000001", "GET", None)]
+        with self.assertLogs("app", level="ERROR") as logs:
+            for path, method, payload in cases:
+                status, response = self.request(path, method, payload)
+                self.assertEqual(status, "503 Service Unavailable")
+                self.assertNotIn("private", response["error"])
+        self.assertNotIn("private", " ".join(logs.output))
+        self.assertEqual(self.request("/health")[0], "200 OK")
+
+    def test_invalid_cloud_document_paths_never_reach_store(self):
+        store = Mock()
+        self.app = create_app(store=store)
+        for path in ("/logs/", "/logs/a/b/c", "/logs/../../secret", "/logs/invalid"):
+            self.assertEqual(self.request(path)[0], "404 Not Found")
+        store.get.assert_not_called()
 
 
 if __name__ == "__main__":

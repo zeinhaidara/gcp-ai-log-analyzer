@@ -49,11 +49,11 @@ Zein's host connection `github-log-analyzer` is authorized and linked to this re
 | Trigger | Event | Config | Service account |
 | --- | --- | --- | --- |
 | `log-analyzer-pr-validation` (enabled) | PR into `dev` or `main` | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
-| `log-analyzer-dev-push` (paused until merge) | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
+| `log-analyzer-dev-push` (enabled after PR #3 merged) | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
 
 Work on personal feature branches based on `dev`; open a PR into `dev`, then promote reviewed changes from `dev` into protected `main`. No force-pushes. The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge the corrected YAML into `dev` before enabling its deployment trigger. A production target and trigger are future work.
 
-After the reviewed PR is merged into `dev`, enable `log-analyzer-dev-push` in Cloud Build → Triggers and run it once for `dev`. Subsequent pushes/merges to `dev` deploy automatically. Pipeline names, events, branches, and build identities live in those GCP trigger settings; each YAML's `steps` contains the ordered commands. Google Cloud Build does not use a `tasks` field.
+PR #3 is merged into `dev`, and the development deployment trigger is enabled. Subsequent pushes/merges to `dev` deploy automatically. Pipeline names, events, branches, and build identities live in those GCP trigger settings; each YAML's `steps` contains the ordered commands. Google Cloud Build does not use a `tasks` field.
 
 Before review/merge, you can validate the same release pipeline manually from your checked-out branch:
 
@@ -65,7 +65,9 @@ The app uses its attached service account automatically; no JSON keys or GitHub 
 
 Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_IMAGE`, `_SERVICE`, `_RUNTIME_SERVICE_ACCOUNT`, `_LOG_BUCKET`, `_FIRESTORE_DATABASE`, `_FIRESTORE_COLLECTION`, and `_MAX_INSTANCES`. `_REPOSITORY` supplies the default image path. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
 
-The deployed app requires GCP authentication. For local access, run `gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+The deployed app requires GCP authentication. Open its [Cloud Run page](https://console.cloud.google.com/run/detail/us-central1/log-analyzer-dev/metrics?project=ai-log-analyzer-511017) to inspect revisions and logs. For the dashboard, run `gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+
+The Cloud Run service is labeled `app=log-analyzer`, `environment=dev`, `owner=mahmoud`, and `managed-by=cloud-build`. `_LABELS` preserves these values on future deployments and can be overridden in the trigger. Build records also have searchable app/environment/owner tags. Labels identify resources; they do not grant access.
 
 ## Run locally
 

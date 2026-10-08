@@ -4,6 +4,8 @@ Zein owns this service. Mahmoud owns the dashboard and its CI/CD. Branch workflo
 
 The service receives authenticated Pub/Sub push requests, retrieves the uploaded raw log from Cloud Storage, runs one ADK/Gemini investigation, persists structured findings in Firestore, and appends a summary to BigQuery using a load job.
 
+Verified on October 8, 2026: the private service is deployed with image tag `zein-adk-1`. Synthetic upload `e91426a5-057f-4a4c-b4bb-cebfd00bb888` completed through Pub/Sub, Gemini (`gemini-3.1-flash-lite`), Firestore and BigQuery. Republishing the completed log produced exactly one incident row. Seven unit tests and `pip check` passed. Automatic dashboard publishing and displaying investigation findings remain Mahmoud's app work. This agent image was built locally; the dashboard CI/CD does not yet build, test or scan this separate image.
+
 ```mermaid
 flowchart LR
   Upload[Dashboard upload] --> GCS[Cloud Storage]
@@ -58,7 +60,7 @@ Use `google-cloud-pubsub` in the dashboard, its existing runtime identity, and `
 For an existing uploaded log, manually start an investigation:
 
 ```powershell
-gcloud.cmd pubsub topics publish log-analyzer-dev-investigations --project=ai-log-analyzer-511017 --message='{"log_id":"REPLACE_WITH_UPLOADED_LOG_UUID"}'
+powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
 Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, and `truncated`. BigQuery contains log_id, completed_at, severity, summary, and model. Raw content stays in Cloud Storage.

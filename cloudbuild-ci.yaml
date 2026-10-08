@@ -1,10 +1,8 @@
-# Pipeline name: log-analyzer-pr-validation (CI)
-# Automatic trigger: open/update a PR targeting dev or main.
-# Trigger settings live in GCP Cloud Build > Triggers, not this build file.
-# Steps run top to bottom; any failure stops the pipeline.
+# Pipeline: log-analyzer-pr-validation. Automatic on PRs targeting dev or main.
+# The event/branch/name is configured in Cloud Build > Triggers.
+# Steps execute in order; any failure stops the build. Nothing is published.
 steps:
-# 1. Install dependencies, run app tests, and check source/dependency security.
-- id: test-and-audit
+- id: test-dashboard
   name: python:3.12-slim
   entrypoint: sh
   args:
@@ -14,19 +12,35 @@ steps:
     python -m unittest discover -s tests -v
     bandit -q app.py storage.py
     pip-audit -r requirements.txt --progress-spinner off
-# 2. Build the application container.
-- id: build-image
+- id: test-agent
+  name: python:3.12-slim
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    cd agent_service
+    pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
+    python -m unittest discover -s tests -v
+    bandit -q service.py
+    pip-audit -r requirements.txt --progress-spinner off
+- id: build-images
   name: gcr.io/cloud-builders/docker
-  args: [build, -t, log-analyzer-ci, .]
-# 3. Export that container so Trivy can inspect it without publishing it.
-- id: prepare-image-scan
-  name: gcr.io/cloud-builders/docker
-  args: [save, -o, /workspace/image.tar, log-analyzer-ci]
-# 4. Reject HIGH/CRITICAL vulnerabilities or matching secrets.
-- id: scan-image
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    docker build -t log-analyzer-ci .
+    docker build -t adk-agent-ci agent_service
+    docker save -o /workspace/dashboard.tar log-analyzer-ci
+    docker save -o /workspace/agent.tar adk-agent-ci
+- id: scan-images
   name: aquasec/trivy:0.75.0
-  entrypoint: trivy
-  args: [image, --input, /workspace/image.tar, --scanners, 'vuln,secret', --severity, 'HIGH,CRITICAL', --exit-code, '1', --timeout, 10m]
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    trivy image --input /workspace/dashboard.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --timeout 10m
+    trivy image --input /workspace/agent.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --timeout 10m
 tags: [log-analyzer, ci, mahmoud]
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -29,7 +29,7 @@ A failed step stops the pipeline. Bandit checks source, pip-audit checks depende
 
 Project: **`ai-log-analyzer-511017`**. Region: **`us-central1`**. We reuse Zein's resources:
 
-The [manual pipeline run](https://console.cloud.google.com/cloud-build/builds;region=us-central1/b40a64cc-ce7f-463d-ba8c-8e1dd7d9daa4?project=ai-log-analyzer-511017) succeeded on 2026-10-08. An authenticated synthetic upload verified Cloud Run → Firestore → Storage; anonymous access returned HTTP 403. The app is deployed; automatic GitHub triggering is still pending.
+The [initial manual pipeline run](https://console.cloud.google.com/cloud-build/builds;region=us-central1/b40a64cc-ce7f-463d-ba8c-8e1dd7d9daa4?project=ai-log-analyzer-511017) succeeded on 2026-10-08. An authenticated synthetic upload verified Cloud Run → Firestore → Storage; anonymous access returned HTTP 403. The handoff's security gates were restored afterward; scan and deployment validation for that configuration is in progress.
 
 | Resource | Name |
 | --- | --- |
@@ -44,16 +44,16 @@ The [manual pipeline run](https://console.cloud.google.com/cloud-build/builds;re
 | `log-analyzer-dev-build` | Releases; Logs Writer, Cloud Run Developer, repository Writer, and Service Account User on the dashboard account |
 | `log-analyzer-dev-dashboard` | Running app; existing Firestore access and Object User on the private bucket |
 
-Host connection `log-analyzer-github` has been created in `us-central1` using Zein's time-limited setup grant. Browser authorization of the [Cloud Build GitHub App](https://docs.cloud.google.com/build/docs/automating-builds/github/connect-repo-github) is pending. Link only this repository, then configure these triggers:
+Zein's host connection `github-log-analyzer` is authorized and linked to this repository in `us-central1`. We reuse it and the existing triggers:
 
 | Trigger | Event | Config | Service account |
 | --- | --- | --- | --- |
-| `log-analyzer-pr-validation` | PR into `dev` or `main` | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
-| `log-analyzer-dev-push` | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
+| `log-analyzer-pr-validation` (enabled) | PR into `dev` or `main` | `cloudbuild-ci.yaml` | `log-analyzer-dev-ci` |
+| `log-analyzer-dev-push` (paused until merge) | Push to `dev` | `cloudbuild.yaml` | `log-analyzer-dev-build` |
 
 Work on personal feature branches based on `dev`; open a PR into `dev`, then promote reviewed changes from `dev` into protected `main`. No force-pushes. The trigger creator needs Service Account User on the selected account. Require collaborator approval for external PR builds. Merge the corrected YAML into `dev` before enabling its deployment trigger. A production target and trigger are future work.
 
-Until the repository is linked, you can run the same release pipeline manually from your checked-out branch:
+Before review/merge, you can validate the same release pipeline manually from your checked-out branch:
 
 ```powershell
 gcloud builds submit https://github.com/zeinhaidara/gcp-ai-log-analyzer.git --git-source-revision=mahmoud/simplify-gcp-pipelines --config=cloudbuild.yaml --region=us-central1 --project=ai-log-analyzer-511017 --service-account=projects/ai-log-analyzer-511017/serviceAccounts/log-analyzer-dev-build@ai-log-analyzer-511017.iam.gserviceaccount.com

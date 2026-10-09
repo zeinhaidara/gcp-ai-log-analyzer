@@ -8,15 +8,15 @@ Verified on October 8, 2026: the private service is deployed with image tag `zei
 
 ```mermaid
 flowchart LR
-  Upload[Dashboard upload] --> GCS[Cloud Storage]
-  Upload --> Logs[Firestore logs]
-  Upload --> Topic[Pub/Sub]
-  Topic --> Agent[Cloud Run ADK]
-  GCS --> Agent
-  Agent <--> Gemini[Gemini on Vertex AI]
-  Agent --> Results[Firestore investigations]
-  Agent --> BQ[BigQuery incidents]
-  Results --> API[Dashboard API]
+  Topic[Pub/Sub saved log ID] --> Agent[ADK agent on Cloud Run]
+  GCS[Cloud Storage] -->|raw log| Agent
+  BQ[BigQuery incidents] -->|up to five recent matches| Agent
+  Agent -->|log and history| Gemini[Gemini on Vertex AI]
+  Gemini -->|structured findings| Agent
+  Agent -->|status and findings| Results[Firestore investigations]
+  Agent -->|incident summary| BQ
+  Results -->|API polling| Dashboard[Dashboard findings]
+  BQ -->|seven-day aggregates| Dashboard
 ```
 
 ## Automatic deployment
@@ -61,7 +61,7 @@ For an existing uploaded log, manually start an investigation:
 powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
-Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, and `truncated`. BigQuery contains log_id, completed_at, severity, summary, and model. Raw content stays in Cloud Storage.
+Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
 
 ## Limits and recovery
 

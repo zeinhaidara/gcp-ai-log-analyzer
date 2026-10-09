@@ -1,20 +1,21 @@
-"""Small WSGI log dashboard. Cloud integrations are added in later phases."""
+"""WSGI log dashboard with local or persistent GCP storage."""
 import json
-import os
-import sqlite3
+import logging
 import uuid
 from datetime import datetime, timezone
-from contextlib import closing
 from pathlib import Path
+from storage import StorageUnavailable, create_store
+from analytics import incident_analytics
+from investigations import create_investigations, InvestigationUnavailable, InvestigationNotFound
 
 MAX_BODY = 1024 * 1024
 
 
-def create_app(database=None):
-    database = database or os.environ.get("DATABASE_PATH", "data/logs.db")
-    Path(database).parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(database)) as db, db:
-        db.execute("CREATE TABLE IF NOT EXISTS logs (id TEXT PRIMARY KEY, filename TEXT, timestamp TEXT, status TEXT, content TEXT, error_count INTEGER, warning_count INTEGER)")
+def create_app(database=None, store=None, analytics=None, investigations=None):
+    store = store if store is not None else create_store(database)
+    analytics = analytics if analytics is not None else incident_analytics
+    supplied_investigations = investigations
+    investigations = investigations if investigations is not None else create_investigations(store)
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
@@ -29,6 +30,8 @@ def create_app(database=None):
             return respond(start_response, "200 OK", (Path(__file__).parent / "static" / name).read_text(encoding="utf-8"), mime)
         if method == "GET" and path == "/health":
             return respond(start_response, "200 OK", {"status": "ok"})
+        if method == "GET" and path == "/analytics":
+            return respond(start_response, "200 OK", analytics())
         if path == "/logs" and method == "POST":
             try:
                 length = int(environ.get("CONTENT_LENGTH") or 0)
@@ -42,23 +45,84 @@ def create_app(database=None):
                     raise ValueError()
                 if not isinstance(content, str) or not content.strip() or "\x00" in content:
                     raise ValueError()
-            except (ValueError, UnicodeDecodeError):
+                content.encode("utf-8")
+            except (ValueError, UnicodeError):
                 return respond(start_response, "400 Bad Request", {"error": "Provide a plain .txt filename and nonempty UTF-8 content."})
             record = {"id": str(uuid.uuid4()), "filename": filename, "timestamp": datetime.now(timezone.utc).isoformat(), "status": "processed", "content": content, "error_count": sum("ERROR" in line.upper() for line in content.splitlines()), "warning_count": sum("WARN" in line.upper() for line in content.splitlines())}
-            with closing(sqlite3.connect(database)) as db, db:
-                db.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?)", tuple(record.values()))
+            try:
+                store.save(record)
+            except StorageUnavailable:
+                return unavailable(start_response)
+            if supplied_investigations is None:
+                record["investigation"] = enqueue(record["id"])
+            else:
+                try:
+                    record["investigation"] = investigations.queue(record["id"])
+                except (InvestigationUnavailable, InvestigationNotFound):
+                    record["investigation"] = {"status": "dispatch_failed", "message": "Upload saved. Retry the investigation without uploading again."}
             return respond(start_response, "201 Created", record)
+        if path.startswith("/logs/") and path.endswith("/investigation") and method in ("GET", "POST"):
+            log_id = path.removeprefix("/logs/").removesuffix("/investigation")
+            try:
+                if str(uuid.UUID(log_id)) != log_id:
+                    raise ValueError()
+            except ValueError:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            try:
+                result = investigations.queue(log_id) if method == "POST" else investigations.get(log_id)
+                return respond(start_response, "202 Accepted" if method == "POST" else "200 OK", result)
+            except InvestigationNotFound:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            except InvestigationUnavailable:
+                return respond(start_response, "503 Service Unavailable", {"error": "Investigation temporarily unavailable. Retry using this saved log."})
+        if path.startswith("/investigations/") and method in ("GET", "POST"):
+            log_id = path.removeprefix("/investigations/")
+            try:
+                if str(uuid.UUID(log_id)) != log_id:
+                    raise ValueError()
+            except ValueError:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            try:
+                result = store.investigation(log_id)
+            except StorageUnavailable:
+                return unavailable(start_response)
+            if result is None:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            if method == "POST" and result["status"] not in ("completed", "processing", "queued", "disabled"):
+                result = enqueue(log_id)
+                if result["status"] == "enqueue_failed":
+                    return respond(start_response, "503 Service Unavailable", result)
+                return respond(start_response, "202 Accepted", result)
+            return respond(start_response, "200 OK", result)
         if method == "GET" and (path == "/logs" or path.startswith("/logs/")):
-            with closing(sqlite3.connect(database)) as db, db:
-                db.row_factory = sqlite3.Row
+            try:
                 if path == "/logs":
-                    records = db.execute("SELECT id, filename, timestamp, status, error_count, warning_count FROM logs ORDER BY timestamp DESC LIMIT 100").fetchall()
-                    return respond(start_response, "200 OK", [dict(row) for row in records])
-                row = db.execute("SELECT * FROM logs WHERE id = ?", (path.removeprefix("/logs/"),)).fetchone()
-                if row:
-                    return respond(start_response, "200 OK", dict(row))
+                    return respond(start_response, "200 OK", store.list_recent())
+                log_id = path.removeprefix("/logs/")
+                try:
+                    if str(uuid.UUID(log_id)) != log_id:
+                        raise ValueError()
+                except ValueError:
+                    return respond(start_response, "404 Not Found", {"error": "Log not found."})
+                record = store.get(log_id)
+                if record:
+                    return respond(start_response, "200 OK", record)
+            except StorageUnavailable:
+                return unavailable(start_response)
             return respond(start_response, "404 Not Found", {"error": "Log not found."})
         return respond(start_response, "404 Not Found", {"error": "Route not found."})
+
+    def unavailable(start_response):
+        # Do not log exception text: provider errors can include sensitive data.
+        logging.getLogger(__name__).error("Log storage operation failed")
+        return respond(start_response, "503 Service Unavailable", {"error": "Log storage is temporarily unavailable. Check recent logs before retrying an upload."})
+
+    def enqueue(log_id):
+        try:
+            return store.enqueue(log_id)
+        except StorageUnavailable:
+            logging.getLogger(__name__).error("Investigation publication failed for log_id=%s", log_id)
+            return {"status": "enqueue_failed", "error": "Log saved, but investigation could not be queued. Retry the investigation from this log; do not upload it again."}
 
     return application
 

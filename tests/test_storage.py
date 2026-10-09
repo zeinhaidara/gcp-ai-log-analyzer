@@ -1,4 +1,6 @@
 import os
+import base64
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,6 +102,47 @@ class GCPStorageTests(unittest.TestCase):
             self.store.get(record()["id"])
         self.blob.download_as_bytes.assert_not_called()
 
+    def test_publication_contains_only_log_id_and_waits_for_receipt(self):
+        publisher = Mock()
+        publisher.post.return_value.json.return_value = {"messageIds": ["123"]}
+        store = GCPLogStore("test-project", "test-bucket", firestore_client=self.firestore,
+                            storage_client=self.storage, topic="investigations", publish_client=publisher)
+        self.assertEqual(store.enqueue(record()["id"]), {"status": "queued"})
+        call = publisher.post.call_args
+        self.assertEqual(call.args[0], "https://pubsub.googleapis.com/v1/projects/test-project/topics/investigations:publish")
+        self.assertEqual(json.loads(base64.b64decode(call.kwargs["json"]["messages"][0]["data"])), {"log_id": record()["id"]})
+        self.assertEqual(call.kwargs["timeout"], 10)
+        publisher.post.return_value.raise_for_status.assert_called_once()
+
+    def test_publication_timeout_is_recoverable(self):
+        from requests.exceptions import Timeout
+        publisher = Mock()
+        publisher.post.side_effect = Timeout("private token")
+        store = GCPLogStore("test-project", "test-bucket", firestore_client=self.firestore,
+                            storage_client=self.storage, topic="investigations", publish_client=publisher)
+        with self.assertRaises(StorageUnavailable):
+            store.enqueue(record()["id"])
+        self.document.create.assert_not_called()
+
+    def test_results_read_metadata_only_and_hide_worker_lease(self):
+        results = Mock()
+        self.firestore.collection.side_effect = lambda name: results if name == "investigations" else self.collection
+        self.document.get.return_value.exists = True
+        results.document.return_value.get.return_value = self.snapshot(
+            {"status": "completed", "findings": {"summary": "Timeout"}, "model": "test",
+             "owner": "internal", "lease_until": "internal"})
+        store = GCPLogStore("test-project", "test-bucket", firestore_client=self.firestore,
+                            storage_client=self.storage, topic="investigations", publish_client=Mock())
+        data = store.investigation(record()["id"])
+        self.assertEqual(data["status"], "completed")
+        self.assertNotIn("owner", data)
+        self.assertNotIn("lease_until", data)
+        self.blob.download_as_bytes.assert_not_called()
+        results.document.return_value.get.return_value.exists = False
+        self.assertEqual(store.investigation(record()["id"]), {"status": "waiting"})
+        self.document.get.return_value.exists = False
+        self.assertIsNone(store.investigation(record()["id"]))
+
 
 class StorageConfigurationTests(unittest.TestCase):
     def test_cloud_configuration_required(self):
@@ -122,7 +165,7 @@ class StorageConfigurationTests(unittest.TestCase):
                     "LOG_BUCKET": "test-bucket"}
         with patch.dict(os.environ, settings, clear=True), patch("storage.GCPLogStore") as store:
             self.assertIs(create_store(), store.return_value)
-            store.assert_called_once_with("test-project", "test-bucket", database="log-analyzer", collection="logs")
+            store.assert_called_once_with("test-project", "test-bucket", database="(default)", collection="logs", topic=None)
 
     def test_sqlite_list_limit_and_content_exclusion(self):
         with tempfile.TemporaryDirectory() as directory:

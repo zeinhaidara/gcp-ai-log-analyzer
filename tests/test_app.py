@@ -111,6 +111,45 @@ class AppTests(unittest.TestCase):
             self.assertEqual(self.request(path)[0], "404 Not Found")
         store.get.assert_not_called()
 
+    def test_local_upload_explains_ai_is_disabled(self):
+        _, log = self.request("/logs", "POST", {"filename": "a.txt", "content": "INFO test"})
+        self.assertEqual(log["investigation"]["status"], "disabled")
+        self.assertEqual(self.request("/investigations/" + log["id"])[1], {"status": "disabled"})
+
+    def test_publish_failure_keeps_upload_and_retry_reuses_saved_id(self):
+        store = Mock()
+        store.enqueue.side_effect = [StorageUnavailable("private token"), {"status": "queued"}]
+        store.investigation.return_value = {"status": "waiting"}
+        self.app = create_app(store=store)
+        with self.assertLogs("app", level="ERROR") as logs:
+            status, log = self.request("/logs", "POST", {"filename": "a.txt", "content": "ERROR synthetic"})
+        self.assertEqual(status, "201 Created")
+        self.assertEqual(log["investigation"]["status"], "enqueue_failed")
+        self.assertNotIn("private", str(log) + str(logs.output))
+        self.assertEqual(self.request("/investigations/" + log["id"], "POST"), ("202 Accepted", {"status": "queued"}))
+        store.save.assert_called_once()
+        self.assertEqual([call.args[0] for call in store.enqueue.call_args_list], [log["id"], log["id"]])
+
+    def test_completed_processing_and_missing_investigations_do_not_republish(self):
+        store = Mock()
+        self.app = create_app(store=store)
+        path = "/investigations/00000000-0000-4000-8000-000000000001"
+        for status in ("completed", "processing", "queued", "disabled"):
+            store.investigation.return_value = {"status": status}
+            self.assertEqual(self.request(path, "POST")[1]["status"], status)
+        store.investigation.return_value = None
+        self.assertEqual(self.request(path, "POST")[0], "404 Not Found")
+        store.enqueue.assert_not_called()
+
+    def test_invalid_investigation_ids_never_reach_cloud(self):
+        store = Mock()
+        self.app = create_app(store=store)
+        for path in ("/investigations/", "/investigations/../../secret", "/investigations/invalid"):
+            for method in ("GET", "POST"):
+                self.assertEqual(self.request(path, method)[0], "404 Not Found")
+        store.investigation.assert_not_called()
+        store.enqueue.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

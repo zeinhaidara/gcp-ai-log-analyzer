@@ -1,7 +1,9 @@
 param([string]$Dashboard = 'log-analyzer-dev', [string]$LogId = '')
 $ErrorActionPreference = 'Stop'
+$manualPublish = [bool]$LogId
 $gcpCli = (Get-Command gcloud.cmd -ErrorAction SilentlyContinue).Source
-if (!$gcpCli) { $gcpCli = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd' }
+if (!$gcpCli) { $gcpCli = Join-Path $PSScriptRoot '..\.tools\google-cloud-sdk\bin\gcloud.cmd' }
+if (!(Test-Path -LiteralPath $gcpCli)) { $gcpCli = Join-Path $env:LOCALAPPDATA 'Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd' }
 if (!(Test-Path -LiteralPath $gcpCli)) { throw 'Install Google Cloud SDK first' }
 $project = 'ai-log-analyzer-511017'
 $region = 'us-central1'
@@ -13,15 +15,18 @@ if ($LASTEXITCODE -ne 0) { throw 'Identity token failed' }
 $payload = @{ filename='adk-smoke-test.txt'; content="2026-10-08T20:00:00Z INFO Application started`n2026-10-08T20:00:01Z ERROR Database connection timed out`n2026-10-08T20:00:02Z WARN Retry scheduled" } | ConvertTo-Json
 $uploaded = Invoke-RestMethod -Method Post -Uri "$baseUrl/logs" -Headers @{Authorization="Bearer $identityToken"} -ContentType application/json -Body $payload
 $LogId = $uploaded.id
+if ($uploaded.investigation.status -ne 'queued') { throw "Upload saved as $LogId but not queued: $($uploaded.investigation.status)" }
 }
 if ($LogId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Expected a UUID log ID' }
 $accessToken = & $gcpCli auth print-access-token
 if ($LASTEXITCODE -ne 0) { throw 'Access token failed' }
+if ($manualPublish) {
 $message = @{log_id=$LogId} | ConvertTo-Json -Compress
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($message))
 $publishBody = @{messages=@(@{data=$encoded})} | ConvertTo-Json -Depth 5
 Invoke-RestMethod -Method Post -Uri "https://pubsub.googleapis.com/v1/projects/$project/topics/log-analyzer-dev-investigations:publish" -Headers @{Authorization="Bearer $accessToken"} -ContentType application/json -Body $publishBody | Out-Null
-Write-Output "Published investigation for log_id=$LogId"
+}
+Write-Output "Checking investigation for log_id=$LogId"
 $resultUrl = "https://firestore.googleapis.com/v1/projects/$project/databases/(default)/documents/investigations/$LogId"
 $completed = $false
 for ($attempt=0; $attempt -lt 60; $attempt++) {

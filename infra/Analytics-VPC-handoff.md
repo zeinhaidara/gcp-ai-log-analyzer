@@ -44,7 +44,7 @@ flowchart LR
 ```
 
 The dashboard publishes automatically after durable storage, and its API exposes
-queued, processing, retrying and completed status with findings. The UI polls the selected
+queued, processing, retrying and completed status with findings. Both `/investigations/{UUID}` and `/logs/{UUID}/investigation` support status and retry. The UI polls the selected
 log and displays severity, summary, possible cause, recommendations and history count.
 Use `agent_service/Smoke-Test-App.ps1` to verify the automatic flow.
 The analytics page counts completed investigations, not every uploaded file.
@@ -103,7 +103,7 @@ New trigger substitutions (resource names, not secrets):
 | `_INVESTIGATION_TOPIC` | `log-analyzer-dev-investigations` |
 | `_AGENT_SERVICE` | `log-analyzer-dev-agent` |
 | `_AGENT_IMAGE` | `us-central1-docker.pkg.dev/ai-log-analyzer-511017/log-analyzer-dev/adk-agent` |
-| `_AGENT_SERVICE_ACCOUNT` | `log-analyzer-dev-agent@ai-log-analyzer-511017.iam.gserviceaccount.com` |
+| `_AGENT_RUNTIME_SERVICE_ACCOUNT` | `log-analyzer-dev-agent@ai-log-analyzer-511017.iam.gserviceaccount.com` |
 | `_GEMINI_MODEL` | `gemini-3.1-flash-lite` |
 
 The dashboard environment also needs `BIGQUERY_LOCATION=us-central1` and

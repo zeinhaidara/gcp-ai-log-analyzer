@@ -1,9 +1,62 @@
 const message = document.querySelector('#message');
+const state = document.querySelector('#investigation-status');
+const retry = document.querySelector('#retry');
+let selectedId, selection = 0, timer;
 async function request(path, options) {
   const response = await fetch(path, options);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Request failed');
   return data;
+}
+function renderInvestigation(result) {
+  const labels = {queued: 'Queued for investigation.', waiting: 'Waiting for the agent. You can retry if delivery stalled.', processing: 'Agent is investigating…', retrying: 'Agent encountered an error; Pub/Sub will retry delivery.', completed: 'Investigation completed. AI suggestions need your review.', disabled: 'AI investigation is available when connected to GCP.', enqueue_failed: result.error};
+  state.textContent = labels[result.status] || 'Investigation status unavailable.';
+  retry.hidden = !['waiting', 'retrying', 'enqueue_failed'].includes(result.status);
+  const findings = result.findings;
+  document.querySelector('#findings').hidden = !findings;
+  if (findings) {
+    document.querySelector('#severity').textContent = findings.severity;
+    document.querySelector('#summary').textContent = findings.summary;
+    document.querySelector('#cause').textContent = findings.likely_cause;
+    const list = document.querySelector('#recommendations');
+    list.replaceChildren();
+    for (const suggestion of findings.recommendations || []) {
+      const item = document.createElement('li');
+      item.textContent = suggestion;
+      list.append(item);
+    }
+    document.querySelector('#model').textContent = `${result.model || ''}${result.truncated ? ' · Only the first 24,000 characters were analyzed.' : ''}`;
+    document.querySelector('#history').textContent = `Historical incidents used: ${result.history_count || 0}`;
+  }
+}
+async function watch(logId, version, attempts = 0) {
+  try {
+    const result = await request(`/investigations/${logId}`);
+    if (version !== selection) return;
+    renderInvestigation(result);
+    if (result.status === 'completed') refreshAnalytics();
+    if (!['completed', 'disabled'].includes(result.status) && attempts < 60) {
+      timer = setTimeout(() => watch(logId, version, attempts + 1), 3000);
+    } else if (attempts === 60 && result.status !== 'completed') {
+      state.textContent += ' Live updates paused; select this log again to check progress.';
+    }
+  } catch (error) {
+    if (version === selection) state.textContent = error.message + ' Select this log again to check progress.';
+  }
+}
+async function selectLog(log) {
+  const version = ++selection;
+  selectedId = log.id;
+  clearTimeout(timer);
+  try {
+    const detail = log.content === undefined ? await request(`/logs/${log.id}`) : log;
+    if (version !== selection) return;
+    document.querySelector('#filename').textContent = detail.filename;
+    document.querySelector('#content').textContent = detail.content;
+    document.querySelector('#detail').hidden = false;
+    renderInvestigation(detail.investigation || {status: 'waiting'});
+    await watch(log.id, version);
+  } catch (error) { if (version === selection) message.textContent = error.message; }
 }
 async function refresh() {
   const logs = await request('/logs');
@@ -13,11 +66,23 @@ async function refresh() {
   for (const log of logs) {
     const button = document.createElement('button');
     button.className = 'log';
-    button.textContent = `${log.filename} | ${new Date(log.timestamp).toLocaleString()} | ${log.error_count} errors | ${log.warning_count} warnings | ${log.status}`;
-    button.onclick = () => openLog(log.id);
+    button.textContent = `${log.filename} | ${new Date(log.timestamp).toLocaleString()} | ${log.error_count} errors | ${log.warning_count} warnings`;
+    button.onclick = () => selectLog(log);
     list.append(button);
   }
 }
+retry.onclick = async () => {
+  const logId = selectedId, version = selection;
+  retry.disabled = true;
+  clearTimeout(timer);
+  try {
+    const result = await request(`/investigations/${logId}`, {method: 'POST'});
+    if (version !== selection) return;
+    renderInvestigation(result);
+    await watch(logId, version);
+  } catch (error) { if (version === selection) state.textContent = error.message; }
+  finally { retry.disabled = false; }
+};
 document.querySelector('#upload').onsubmit = async event => {
   event.preventDefault();
   const button = event.target.querySelector('button');
@@ -26,10 +91,11 @@ document.querySelector('#upload').onsubmit = async event => {
     const file = document.querySelector('#file').files[0];
     if (!file || file.size > 900 * 1024) throw new Error('Choose a .txt file under 900 KiB.');
     const content = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
-    const uploaded = await request('/logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: file.name, content})});
-    message.textContent = uploaded.investigation.status === 'dispatch_failed' ? uploaded.investigation.message : 'Log saved. Investigation status appears below.';
+    const log = await request('/logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: file.name, content})});
+    message.textContent = log.investigation.error || 'Log saved.';
+    // Show the saved ID immediately, even if list refresh later fails.
+    await selectLog(log);
     await refresh();
-    await openLog(uploaded.id);
   } catch (error) { message.textContent = error.message; }
   finally { button.disabled = false; }
 };
@@ -56,68 +122,3 @@ async function refreshAnalytics() {
 }
 document.querySelector('#refresh-analytics').onclick = refreshAnalytics;
 refreshAnalytics();
-
-let activeLogId = null;
-let pollTimer = null;
-async function openLog(logId) {
-  activeLogId = logId;
-  clearTimeout(pollTimer);
-  document.querySelector('#investigation').textContent = 'Loading investigation…';
-  document.querySelector('#retry-investigation').hidden = true;
-  try {
-    const detail = await request(`/logs/${encodeURIComponent(logId)}`);
-    if (activeLogId !== logId) return;
-    document.querySelector('#filename').textContent = detail.filename;
-    document.querySelector('#content').textContent = detail.content;
-    document.querySelector('#detail').hidden = false;
-    await pollInvestigation(logId, 0);
-  } catch (error) { message.textContent = error.message; }
-}
-async function pollInvestigation(logId, attempt) {
-  if (activeLogId !== logId) return;
-  const target = document.querySelector('#investigation');
-  const retry = document.querySelector('#retry-investigation');
-  try {
-    const result = await request(`/logs/${encodeURIComponent(logId)}/investigation`);
-    if (activeLogId !== logId) return;
-    target.replaceChildren();
-    const status = document.createElement('p');
-    status.textContent = `AI investigation: ${result.status.replaceAll('_', ' ')}`;
-    target.append(status);
-    retry.hidden = !['dispatch_failed', 'not_requested', 'retrying'].includes(result.status);
-    if (result.findings) {
-      for (const [label, value] of [['Severity', result.findings.severity], ['Summary', result.findings.summary], ['Possible cause', result.findings.likely_cause]]) {
-        const line = document.createElement('p'); line.textContent = `${label}: ${value}`; target.append(line);
-      }
-      const steps = document.createElement('ol');
-      for (const text of result.findings.recommendations || []) {
-        const item = document.createElement('li'); item.textContent = text; steps.append(item);
-      }
-      target.append(steps);
-      const context = document.createElement('p');
-      context.textContent = `Historical incidents used: ${result.history_count || 0}. AI suggestions require review.`;
-      target.append(context);
-    }
-    if (['queued', 'processing', 'retrying'].includes(result.status) && attempt < 60) {
-      pollTimer = setTimeout(() => pollInvestigation(logId, attempt + 1), 5000);
-    } else if (attempt >= 60 && result.status !== 'completed') {
-      const notice = document.createElement('p'); notice.textContent = 'Still pending. Reopen this log later to check progress.'; target.append(notice);
-    }
-    if (result.status === 'completed') refreshAnalytics();
-  } catch (error) {
-    if (activeLogId !== logId) return;
-    target.textContent = error.message;
-    retry.hidden = false;
-  }
-}
-document.querySelector('#retry-investigation').onclick = async () => {
-  const logId = activeLogId;
-  if (!logId) return;
-  const button = document.querySelector('#retry-investigation'); button.disabled = true;
-  clearTimeout(pollTimer);
-  try {
-    await request(`/logs/${encodeURIComponent(logId)}/investigation`, {method: 'POST'});
-    await pollInvestigation(logId, 0);
-  } catch (error) { document.querySelector('#investigation').textContent = error.message; }
-  finally { button.disabled = false; }
-};

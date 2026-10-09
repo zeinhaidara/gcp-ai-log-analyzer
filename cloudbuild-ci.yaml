@@ -1,6 +1,8 @@
-# Pull requests: test and scan the app, then build and scan its container.
+# Pipeline: log-analyzer-pr-validation. Automatic on PRs targeting dev or main.
+# The event/branch/name is configured in Cloud Build > Triggers.
+# Steps execute in order; any failure stops the build. Nothing is published.
 steps:
-- id: test
+- id: test-dashboard
   name: python:3.12-slim
   entrypoint: sh
   args:
@@ -10,16 +12,6 @@ steps:
     python -m unittest discover -s tests -v
     bandit -q app.py storage.py analytics.py investigations.py
     pip-audit -r requirements.txt --progress-spinner off
-- id: build
-  name: gcr.io/cloud-builders/docker
-  args: [build, -t, log-analyzer-ci, .]
-- id: export-image
-  name: gcr.io/cloud-builders/docker
-  args: [save, -o, /workspace/image.tar, log-analyzer-ci]
-- id: scan-image
-  name: aquasec/trivy:0.75.0
-  entrypoint: trivy
-  args: [image, --input, /workspace/image.tar, --scanners, 'vuln,secret', --severity, 'HIGH,CRITICAL', --exit-code, '1', --timeout, 10m]
 - id: test-agent
   name: python:3.12-slim
   entrypoint: sh
@@ -31,16 +23,24 @@ steps:
     python -m unittest discover -s tests -v
     bandit -q service.py
     pip-audit -r requirements.txt --progress-spinner off
-- id: build-agent
+- id: build-images
   name: gcr.io/cloud-builders/docker
-  args: [build, -t, log-analyzer-agent-ci, agent_service]
-- id: export-agent-image
-  name: gcr.io/cloud-builders/docker
-  args: [save, -o, /workspace/agent-image.tar, log-analyzer-agent-ci]
-- id: scan-agent-image
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    docker build -t log-analyzer-ci .
+    docker build -t adk-agent-ci agent_service
+    docker save -o /workspace/dashboard.tar log-analyzer-ci
+    docker save -o /workspace/agent.tar adk-agent-ci
+- id: scan-images
   name: aquasec/trivy:0.75.0
-  entrypoint: trivy
-  args: [image, --input, /workspace/agent-image.tar, --scanners, 'vuln,secret', --severity, 'HIGH,CRITICAL', --exit-code, '1', --timeout, 10m]
+  entrypoint: sh
+  args:
+  - -ec
+  - |
+    trivy image --input /workspace/dashboard.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --timeout 10m
+    trivy image --input /workspace/agent.tar --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --timeout 10m
 tags: [log-analyzer, ci, mahmoud]
 options:
   logging: CLOUD_LOGGING_ONLY

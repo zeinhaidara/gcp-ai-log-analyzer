@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from storage import StorageUnavailable, create_store
 from analytics import incident_analytics
+from investigations import create_investigations, InvestigationUnavailable, InvestigationNotFound
 
 MAX_BODY = 1024 * 1024
 
 
-def create_app(database=None, store=None, analytics=None):
+def create_app(database=None, store=None, analytics=None, investigations=None):
     store = store if store is not None else create_store(database)
     analytics = analytics if analytics is not None else incident_analytics
+    investigations = investigations if investigations is not None else create_investigations(store)
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
@@ -50,7 +52,25 @@ def create_app(database=None, store=None, analytics=None):
                 store.save(record)
             except StorageUnavailable:
                 return unavailable(start_response)
+            try:
+                record["investigation"] = investigations.queue(record["id"])
+            except (InvestigationUnavailable, InvestigationNotFound):
+                record["investigation"] = {"status": "dispatch_failed", "message": "Upload saved. Retry the investigation without uploading again."}
             return respond(start_response, "201 Created", record)
+        if path.startswith("/logs/") and path.endswith("/investigation") and method in ("GET", "POST"):
+            log_id = path.removeprefix("/logs/").removesuffix("/investigation")
+            try:
+                if str(uuid.UUID(log_id)) != log_id:
+                    raise ValueError()
+            except ValueError:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            try:
+                result = investigations.queue(log_id) if method == "POST" else investigations.get(log_id)
+                return respond(start_response, "202 Accepted" if method == "POST" else "200 OK", result)
+            except InvestigationNotFound:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            except InvestigationUnavailable:
+                return respond(start_response, "503 Service Unavailable", {"error": "Investigation temporarily unavailable. Retry using this saved log."})
         if method == "GET" and (path == "/logs" or path.startswith("/logs/")):
             try:
                 if path == "/logs":

@@ -14,14 +14,7 @@ async function refresh() {
     const button = document.createElement('button');
     button.className = 'log';
     button.textContent = `${log.filename} | ${new Date(log.timestamp).toLocaleString()} | ${log.error_count} errors | ${log.warning_count} warnings | ${log.status}`;
-    button.onclick = async () => {
-      try {
-        const detail = await request(`/logs/${encodeURIComponent(log.id)}`);
-        document.querySelector('#filename').textContent = detail.filename;
-        document.querySelector('#content').textContent = detail.content;
-        document.querySelector('#detail').hidden = false;
-      } catch (error) { message.textContent = error.message; }
-    };
+    button.onclick = () => openLog(log.id);
     list.append(button);
   }
 }
@@ -33,9 +26,10 @@ document.querySelector('#upload').onsubmit = async event => {
     const file = document.querySelector('#file').files[0];
     if (!file || file.size > 900 * 1024) throw new Error('Choose a .txt file under 900 KiB.');
     const content = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
-    await request('/logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: file.name, content})});
-    message.textContent = 'Log processed.';
+    const uploaded = await request('/logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: file.name, content})});
+    message.textContent = uploaded.investigation.status === 'dispatch_failed' ? uploaded.investigation.message : 'Log saved. Investigation status appears below.';
     await refresh();
+    await openLog(uploaded.id);
   } catch (error) { message.textContent = error.message; }
   finally { button.disabled = false; }
 };
@@ -62,3 +56,68 @@ async function refreshAnalytics() {
 }
 document.querySelector('#refresh-analytics').onclick = refreshAnalytics;
 refreshAnalytics();
+
+let activeLogId = null;
+let pollTimer = null;
+async function openLog(logId) {
+  activeLogId = logId;
+  clearTimeout(pollTimer);
+  document.querySelector('#investigation').textContent = 'Loading investigation…';
+  document.querySelector('#retry-investigation').hidden = true;
+  try {
+    const detail = await request(`/logs/${encodeURIComponent(logId)}`);
+    if (activeLogId !== logId) return;
+    document.querySelector('#filename').textContent = detail.filename;
+    document.querySelector('#content').textContent = detail.content;
+    document.querySelector('#detail').hidden = false;
+    await pollInvestigation(logId, 0);
+  } catch (error) { message.textContent = error.message; }
+}
+async function pollInvestigation(logId, attempt) {
+  if (activeLogId !== logId) return;
+  const target = document.querySelector('#investigation');
+  const retry = document.querySelector('#retry-investigation');
+  try {
+    const result = await request(`/logs/${encodeURIComponent(logId)}/investigation`);
+    if (activeLogId !== logId) return;
+    target.replaceChildren();
+    const status = document.createElement('p');
+    status.textContent = `AI investigation: ${result.status.replaceAll('_', ' ')}`;
+    target.append(status);
+    retry.hidden = !['dispatch_failed', 'not_requested', 'retrying'].includes(result.status);
+    if (result.findings) {
+      for (const [label, value] of [['Severity', result.findings.severity], ['Summary', result.findings.summary], ['Possible cause', result.findings.likely_cause]]) {
+        const line = document.createElement('p'); line.textContent = `${label}: ${value}`; target.append(line);
+      }
+      const steps = document.createElement('ol');
+      for (const text of result.findings.recommendations || []) {
+        const item = document.createElement('li'); item.textContent = text; steps.append(item);
+      }
+      target.append(steps);
+      const context = document.createElement('p');
+      context.textContent = `Historical incidents used: ${result.history_count || 0}. AI suggestions require review.`;
+      target.append(context);
+    }
+    if (['queued', 'processing', 'retrying'].includes(result.status) && attempt < 60) {
+      pollTimer = setTimeout(() => pollInvestigation(logId, attempt + 1), 5000);
+    } else if (attempt >= 60 && result.status !== 'completed') {
+      const notice = document.createElement('p'); notice.textContent = 'Still pending. Reopen this log later to check progress.'; target.append(notice);
+    }
+    if (result.status === 'completed') refreshAnalytics();
+  } catch (error) {
+    if (activeLogId !== logId) return;
+    target.textContent = error.message;
+    retry.hidden = false;
+  }
+}
+document.querySelector('#retry-investigation').onclick = async () => {
+  const logId = activeLogId;
+  if (!logId) return;
+  const button = document.querySelector('#retry-investigation'); button.disabled = true;
+  clearTimeout(pollTimer);
+  try {
+    await request(`/logs/${encodeURIComponent(logId)}/investigation`, {method: 'POST'});
+    await pollInvestigation(logId, 0);
+  } catch (error) { document.querySelector('#investigation').textContent = error.message; }
+  finally { button.disabled = false; }
+};

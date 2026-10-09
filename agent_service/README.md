@@ -4,7 +4,7 @@ Zein owns this service. Mahmoud owns the dashboard and its CI/CD. Branch workflo
 
 The service receives authenticated Pub/Sub push requests, retrieves the uploaded raw log from Cloud Storage, looks up up to five related incidents from the last seven days in BigQuery, runs one ADK/Gemini investigation, persists structured findings in Firestore, and appends a summary to BigQuery using a load job. History lookup uses fixed, parameterized SQL with a 50 MiB billing cap; failure falls back to the current log alone.
 
-Verified on October 8, 2026: the private service is deployed with image tag `zein-adk-1`. Synthetic upload `e91426a5-057f-4a4c-b4bb-cebfd00bb888` completed through Pub/Sub, Gemini (`gemini-3.1-flash-lite`), Firestore and BigQuery. Republishing the completed log produced exactly one incident row. Seven unit tests and `pip check` passed. Automatic dashboard publishing and displaying investigation findings remain Mahmoud's app work. This agent image was built locally; the dashboard CI/CD does not yet build, test or scan this separate image.
+The initial private deployment was verified on October 8, 2026. The current dashboard automatically queues investigations and displays their findings. Both Cloud Build pipeline files now test and scan the dashboard and agent; dev releases deploy both images after security gates pass.
 
 ```mermaid
 flowchart LR
@@ -47,24 +47,29 @@ This builds and tests the image, pushes to the existing registry, creates the ta
 
 Cloud Run verifies IAM before requests reach the application. The Pub/Sub OIDC audience is the base service URL; its push endpoint appends `/pubsub`. The existing Pub/Sub service agent has token-creator access to the push identity and permissions for dead-letter forwarding.
 
-## Contract for Mahmoud
+## Dashboard integration
 
-After successfully storing `logs/{UUID}.txt` and its `logs/{UUID}` Firestore document, publish this JSON to the investigation topic:
+After raw file and metadata storage succeed, the dashboard publishes a UUID request to Pub/Sub. `investigations.py` reads results from Firestore without downloading the raw object during polling.
 
-```json
-{"log_id":"8f99913a-fb03-43d4-9427-9fb9716d236f"}
-```
+| Route | Behavior |
+| --- | --- |
+| `POST /logs` | Saves the upload and queues its investigation; returns 201 even if dispatch failed, with an explicit retry status |
+| `GET /logs/{UUID}/investigation` | Returns investigation progress and safe result fields |
+| `POST /logs/{UUID}/investigation` | Requests an investigation for the saved log without creating another upload |
 
-Use `google-cloud-pubsub` in the dashboard, its existing runtime identity, and `publisher.publish(topic_path, json.dumps({"log_id": record["id"]}).encode()).result(timeout=10)`. The dashboard identity already has publisher access. Handle publish failures separately from successful uploads; do not create another upload on a publishing retry. Add an API route that reads `investigations/{log_id}` and show `processing`, `retrying`, or `completed` and its `findings`. No investigation document exists until a message arrives. Polling the API is sufficient initially. These dashboard changes are intentionally not included on Zein's branch.
+The dashboard automatically opens the uploaded log and polls every five seconds for up to five minutes. Findings include severity, summary, possible cause, recommendations and historical context count. Existing completed, processing or queued requests are not republished by the API. Completed Pub/Sub deliveries skip another model call.
 
-For an existing uploaded log, manually start an investigation:
+If dispatch fails, select Retry investigation. It reuses the saved UUID. Publishing and recording dispatch state are not atomic; a timeout can cause duplicate delivery, handled by the agent's lease and completion checks.
+
+Verify the full automatic flow from this directory:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
+powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test-App.ps1
 ```
 
-Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
+To retry a saved log, add `-LogId UUID`. The older `Smoke-Test.ps1` directly publishes to Pub/Sub for operator recovery.
 
+Completed Firestore documents include findings, model, completed_at, truncated, service_name, failure_category, history_count and history_available. BigQuery stores the incident summary and classification; raw content stays in Cloud Storage.
 ## Limits and recovery
 
 - One instance, concurrency one, minimum zero, request-based CPU billing. This limits parallelism, not total spend. Model calls and storage can incur charges.

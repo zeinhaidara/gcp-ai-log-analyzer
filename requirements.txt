@@ -2,3 +2,4 @@ gunicorn==26.2.0
 google-cloud-firestore==2.29.0
 google-cloud-storage==3.16.0
 google-cloud-bigquery==3.46.1
+google-cloud-pubsub==2.42.0

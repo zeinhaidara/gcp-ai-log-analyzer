@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 from app import create_app
 from storage import StorageUnavailable
+from investigations import InvestigationUnavailable
 
 
 class AppTests(unittest.TestCase):
@@ -32,6 +33,37 @@ class AppTests(unittest.TestCase):
         self.app = create_app(self.database, analytics=source)
         self.assertEqual(self.request("/analytics"), ("200 OK", report))
         source.assert_called_once_with()
+
+    def test_saved_upload_queues_once(self):
+        control = Mock()
+        control.queue.return_value = {"status": "queued"}
+        self.app = create_app(self.database, investigations=control)
+        status, record = self.request("/logs", "POST", {"filename": "test.txt", "content": "ERROR test"})
+        self.assertEqual(status, "201 Created")
+        control.queue.assert_called_once_with(record["id"])
+        self.assertEqual(record["investigation"]["status"], "queued")
+
+    def test_publish_failure_preserves_upload_and_allows_retry(self):
+        control = Mock()
+        control.queue.side_effect = InvestigationUnavailable("secret")
+        self.app = create_app(self.database, investigations=control)
+        status, record = self.request("/logs", "POST", {"filename": "test.txt", "content": "ERROR test"})
+        self.assertEqual(status, "201 Created")
+        self.assertEqual(record["investigation"]["status"], "dispatch_failed")
+        self.assertEqual(self.request("/logs/" + record["id"])[1]["content"], "ERROR test")
+        control.queue.side_effect = None
+        control.queue.return_value = {"status": "queued"}
+        self.assertEqual(self.request("/logs/" + record["id"] + "/investigation", "POST"), ("202 Accepted", {"status": "queued"}))
+        self.assertEqual(len(self.request("/logs")[1]), 1)
+
+    def test_invalid_investigation_id_never_reaches_control(self):
+        control = Mock()
+        self.app = create_app(self.database, investigations=control)
+        self.assertEqual(self.request("/logs/../../other/investigation")[0], "404 Not Found")
+        control.get.assert_not_called()
+
+    def test_local_investigation_requires_saved_log(self):
+        self.assertEqual(self.request("/logs/00000000-0000-4000-8000-000000000001/investigation")[0], "404 Not Found")
 
     def test_upload_list_detail_and_persistence(self):
         status, log = self.request("/logs", "POST", {"filename": "api.txt", "content": "ERROR timeout\nWARN retry\nINFO ready"})

@@ -1,6 +1,6 @@
 # GCP AI Log Analyzer
 
-A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. A separate [ADK investigation service](agent_service/README.md) analyzes logs with Gemini and exports findings to Firestore and BigQuery. Automatic publishing and displaying findings in the dashboard remain app integration work.
+A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. A separate [ADK investigation service](agent_service/README.md) analyzes logs with Gemini and exports findings to Firestore and BigQuery. Cloud uploads now queue investigations automatically; the dashboard displays progress and AI findings.
 
 The dashboard now includes seven-day BigQuery incident reporting. The agent compares each new investigation with up to five recent matching incidents. See the [analytics and VPC handoff](infra/Analytics-VPC-handoff.md) for data flow, networking, access and CI/CD settings.
 
@@ -14,6 +14,15 @@ flowchart LR
     Registry -->|container image| Run
     Run -->|raw log files| Storage[Cloud Storage]
     Run -->|upload metadata| Firestore
+    Run -->|investigation request| Topic[Pub/Sub]
+    Topic --> Agent[Private Cloud Run ADK]
+    Storage --> Agent
+    Agent <--> Gemini[Gemini on Vertex AI]
+    Agent -->|findings| Firestore
+    Firestore -->|findings via API| Run
+    Agent -->|incident summary| BQ[BigQuery]
+    BQ -->|history| Agent
+    BQ -->|reporting| Run
 ```
 
 Infrastructure means the repository, running service, bucket, database, and permissions connecting them. Create these once in GCP; the pipeline updates the app when code changes.
@@ -22,8 +31,8 @@ Infrastructure means the repository, running service, bucket, database, and perm
 
 | File | GitHub event | Steps |
 | --- | --- | --- |
-| `cloudbuild-ci.yaml` | Pull request into `dev` or `main` | Tests and security checks → build → scan image |
-| `cloudbuild.yaml` | Push to `dev` | Same checks → push → deploy development app |
+| `cloudbuild-ci.yaml` | Pull request into `dev` or `main` | Test, audit, build and scan both images |
+| `cloudbuild.yaml` | Push to `dev` | Same checks → push both images → deploy agent and dashboard |
 
 A failed step stops the pipeline. Bandit checks source, pip-audit checks dependencies, and Trivy rejects HIGH/CRITICAL image vulnerabilities or detected secrets before publication. The scanned image is the one pushed and deployed. Each deployment uses its own image tag. Cloud Run scales to zero when idle, with one maximum instance per revision configured. Releases deploy directly. This follows Google's [Cloud Build → Cloud Run example](https://docs.cloud.google.com/build/docs/deploying-builds/deploy-cloud-run).
 

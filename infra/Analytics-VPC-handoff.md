@@ -32,18 +32,21 @@ flowchart LR
     User --> Dashboard[Cloud Run dashboard]
     Dashboard -->|raw file| Storage[Cloud Storage]
     Dashboard -->|metadata| Logs[Firestore logs]
-    Operator[Manual investigation request] --> Topic[Pub/Sub]
+    Dashboard -->|automatic request| Topic[Pub/Sub]
     Topic --> Agent[Private Cloud Run ADK]
     Storage -->|raw log| Agent
     History[BigQuery incidents] -->|recent context| Agent
     Agent <--> Gemini[Gemini on Vertex AI]
     Agent --> Findings[Firestore findings]
+    Findings -->|API and polling| Dashboard
     Agent -->|incident summary| History
     History -->|aggregates| Dashboard
 ```
 
-Automatic dashboard publishing to Pub/Sub and showing individual AI findings remain
-Mahmoud's integration work. Until then, use `agent_service/Smoke-Test.ps1 -LogId UUID`.
+The dashboard publishes automatically after durable storage, and its API exposes
+queued, processing, retrying and completed status with findings. The UI polls the selected
+log and displays severity, summary, possible cause, recommendations and history count.
+Use `agent_service/Smoke-Test-App.ps1` to verify the automatic flow.
 The analytics page counts completed investigations, not every uploaded file.
 
 ## Network
@@ -97,29 +100,54 @@ New trigger substitutions (resource names, not secrets):
 | `_BIGQUERY_TABLE` | `ai-log-analyzer-511017.log_analyzer_dev.incidents` |
 | `_VPC_NETWORK` | `log-analyzer-dev-vpc` |
 | `_VPC_SUBNET` | `log-analyzer-dev-subnet` |
+| `_INVESTIGATION_TOPIC` | `log-analyzer-dev-investigations` |
+| `_AGENT_SERVICE` | `log-analyzer-dev-agent` |
+| `_AGENT_IMAGE` | `us-central1-docker.pkg.dev/ai-log-analyzer-511017/log-analyzer-dev/adk-agent` |
+| `_AGENT_SERVICE_ACCOUNT` | `log-analyzer-dev-agent@ai-log-analyzer-511017.iam.gserviceaccount.com` |
+| `_GEMINI_MODEL` | `gemini-3.1-flash-lite` |
 
-The dashboard environment also needs `BIGQUERY_LOCATION=us-central1`.
+The dashboard environment also needs `BIGQUERY_LOCATION=us-central1` and
+`INVESTIGATION_TOPIC=log-analyzer-dev-investigations`; both are passed by Cloud Build.
 Agent deployments use `agent_service/Deploy-Agent.ps1 -Tag UNIQUE_TAG`:
 it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
-That image is still released separately; integrate its tests, dependency audit and image
-scan into a dedicated Cloud Build pipeline before making its deployment automatic.
+Both pipeline files now test, audit, build and scan the dashboard and agent independently.
+The dev release deploys the private agent before the public dashboard using the same build ID.
 
 Review these changes into `dev` before relying on the dev trigger to preserve all settings.
 No production pipeline is added here.
 
-## Verified deployment: October 9, 2026
+## Initial analytics deployment: October 9, 2026
 
 - Dashboard revision `log-analyzer-dev-00006-zhm`; anonymous dashboard and health return 200.
 - Agent revision `log-analyzer-dev-agent-00003-z4c`; anonymous health returns 403.
 - Both revisions have Direct VPC network/subnet/tag annotations and all-traffic egress.
 - Release build `8d7ed8a1-516e-42bf-8c8a-e24a4d1b4727` succeeded through all dashboard security gates.
-- Local regression tests: 24 dashboard tests and 10 agent tests passed. Agent Bandit and dependency audit passed; its separate container image scan remains future pipeline work.
+- Baseline regression tests: 24 dashboard tests and 10 agent tests passed. Agent Bandit and dependency audit passed. Agent image scanning was added in the subsequent full-app release.
 - Synthetic investigations `6fd6822f-d6c6-4ef9-b149-78e08d81df5b` and `83b88cee-da9f-42e2-aeaf-eb5b3ba25423` each produced exactly one BigQuery row.
 - The second investigation stored `history_count=1`, `history_available=true`, service `orders`, category `database_timeout`.
 - Reporting returned 10 completed investigations, including those two database timeouts.
 - The three new substitutions were applied and read back from the existing dev trigger.
 
 These are deployment-time checks, not a production availability guarantee.
+
+## Complete app release: October 9, 2026
+
+Build `f1a12f59-080a-4f4b-ba0b-705017d1b9fd` passed tests, Bandit, pip-audit and
+Trivy HIGH/CRITICAL vulnerability and secret checks for both images. It deployed
+agent revision `log-analyzer-dev-agent-00004-47h`, then dashboard revision
+`log-analyzer-dev-00007-nhb`. Both use the build ID as their image tag.
+
+The regression suite now contains 33 dashboard tests and 10 agent tests. A real
+browser uploaded `bcdd3a34-f2eb-4ad0-b1ac-c901dc60648c`, automatically queued it,
+and displayed completed findings with two historical incidents and no JavaScript errors.
+An independent API upload, `413a9b60-982f-4995-8088-81a2f0672667`, completed with
+three historical incidents. Both produced one BigQuery row. Retrying the completed
+browser upload reused its existing findings and completion timestamp.
+
+The dashboard remains public; anonymous agent access still returns 403. The existing
+dev trigger now has the topic, agent image/service/account and Gemini model variables.
+Review the updated feature PR into dev so future automatic releases use this complete
+pipeline. Production promotion into main remains a separate reviewed PR.
 
 References: [Direct VPC egress](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc),
 [Private Google Access](https://docs.cloud.google.com/vpc/docs/configure-private-google-access),

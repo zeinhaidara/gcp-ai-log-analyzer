@@ -2,6 +2,41 @@
 const studio = new ReplayStudio();
 const $ = selector => document.querySelector(selector);
 let selectedId = null, selection = 0, timer = null, demoRecord = null;
+let savedLogs = [], currentView = 'home';
+
+function showView(view) {
+  currentView = view;
+  document.body.dataset.view = view;
+  $('#welcome').hidden = view !== 'home';
+  $('#library').hidden = !['home','logs'].includes(view);
+  $('#studio').hidden = view !== 'case';
+  $('#report-section').hidden = view !== 'reports';
+  $('#library-title').textContent = view === 'logs' ? 'Saved logs' : 'Recent logs';
+  $('#library-description').textContent = view === 'logs' ? 'Choose a log to open its replay and AI findings.' : 'Pick up where you left off.';
+  $('#log-search-label').hidden = view !== 'logs';
+  $('#view-all-logs').hidden = view !== 'home' || savedLogs.length <= 3;
+  document.querySelectorAll('[data-view-link]').forEach(link => {
+    if(link.dataset.viewLink === view) link.setAttribute('aria-current','page');
+    else link.removeAttribute('aria-current');
+  });
+  renderLogs();
+}
+function navigate(view) {
+  ++selection; clearTimeout(timer); studio.pause(); notify('');
+  showView(view);
+  window.scrollTo({top:0});
+  if(view === 'reports') refreshAnalytics();
+}
+function route() {
+  const hash = location.hash.slice(1);
+  const demo = new URLSearchParams(hash).get('demo');
+  if(['retry-storm','token-expiry','payment-recovery'].includes(demo)) loadDemo(demo);
+  else if(hash.startsWith('case=')) {
+    const id = new URLSearchParams(hash).get('case');
+    if(/^[0-9a-f-]{36}$/.test(id)) selectLog({id});
+    else navigate('home');
+  } else navigate(['logs','reports'].includes(hash) ? hash : 'home');
+}
 
 async function request(path, options) {
   const response = await fetch(path, options);
@@ -44,7 +79,10 @@ async function selectLog(log) {
   try {
     const artifact = await request(`/logs/${log.id}/replay`);
     if(version !== selection) return;
+    showView('case');
     studio.load({...log,...artifact},artifact.replay); renderInvestigation(artifact.investigation || log.investigation || {status:'waiting'}); notify('');
+    history.replaceState(null,'',`#case=${log.id}`);
+    window.scrollTo({top:0});
     await watch(log.id,version);
   } catch(error) { if(version === selection) notify(error.message); }
 }
@@ -54,18 +92,29 @@ async function loadDemo(name) {
   try {
     const record = await request(`/replay/demo/${encodeURIComponent(name)}`);
     if(version !== selection) return;
+    showView('case');
     demoRecord = record; studio.load(record,record.replay); renderInvestigation({status:'preview'}); notify('');
+    history.replaceState(null,'',`#demo=${name}`);
+    window.scrollTo({top:0});
   } catch(error) { if(version === selection) notify(error.message); }
 }
 async function refresh() {
-  const logs = await request('/logs'); $('#case-count').textContent = logs.length;
+  savedLogs = await request('/logs'); renderLogs();
+}
+function renderLogs() {
+  const query = currentView === 'logs' ? $('#log-search').value.trim().toLowerCase() : '';
+  const matching = savedLogs.filter(log => log.filename.toLowerCase().includes(query));
+  const logs = currentView === 'home' ? matching.slice(0,3) : matching;
+  $('#case-count').textContent = savedLogs.length;
+  $('#view-all-logs').hidden = currentView !== 'home' || savedLogs.length <= 3;
   const list = $('#logs'); list.replaceChildren();
-  if(!logs.length) list.append(element('p','fine-print','No saved cases yet. Open a log or try a scenario below.'));
+  if(!logs.length) list.append(element('p','empty-logs',query ? 'No filenames match your search.' : 'Your saved logs will appear here. Open a log to get started.'));
   for(const log of logs) {
     const button = element('button','case-button'); button.type='button';button.dataset.logId=log.id;
     const name=element('span','case-name',log.filename);name.title=log.filename;
     const date=new Date(log.timestamp).toLocaleDateString(undefined,{month:'short',day:'numeric'});
-    button.append(name,element('small','',`${date} · ${log.error_count} errors · ${log.warning_count} warnings`));
+    const details=element('span','case-details',`${log.error_count} errors · ${log.warning_count} warnings`);
+    button.append(name,details,element('time','case-date',date),element('span','case-arrow','→'));
     button.onclick=()=>selectLog(log);list.append(button);
   }
   markSelected();
@@ -104,6 +153,8 @@ $('#retry').onclick=async()=>{
 };
 document.querySelectorAll('[data-demo]').forEach(button=>button.onclick=()=>loadDemo(button.dataset.demo));
 $('#refresh-logs').onclick=()=>refresh().catch(error=>notify(error.message));
+$('#log-search').oninput=renderLogs;
+window.addEventListener('hashchange',route);
 
 async function refreshAnalytics() {
   const target=$('#analytics');
@@ -121,6 +172,5 @@ async function refreshAnalytics() {
   } catch { target.textContent='Incident reporting is temporarily unavailable.'; }
 }
 $('#refresh-analytics').onclick=refreshAnalytics;
-refresh().catch(error=>notify(error.message));refreshAnalytics();
-const initialDemo = new URLSearchParams(location.hash.slice(1)).get('demo');
-if (['retry-storm','token-expiry','payment-recovery'].includes(initialDemo)) loadDemo(initialDemo);
+route();
+refresh().catch(error=>notify(error.message));

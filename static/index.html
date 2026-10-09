@@ -8,41 +8,35 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <script src="/replay.js" defer></script><script src="/app.js" defer></script>
 </head>
-<body>
+<body data-view="home">
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Incident Desk home"><span class="brand-mark" aria-hidden="true">↶</span><span>Incident<span class="brand-light">Desk</span><small>THE INCIDENT TIME MACHINE</small></span></a>
-    <div class="top-actions"><span class="environment"><span class="status-dot"></span>Evidence first</span><button class="button primary" id="open-upload" type="button"><span aria-hidden="true">＋</span> Open a log</button></div>
+    <a class="brand" href="#home" aria-label="Incident Desk home"><span class="brand-mark" aria-hidden="true">↶</span><span>Incident<span class="brand-light">Desk</span></span></a>
+    <nav class="main-nav" aria-label="Main navigation"><a href="#home" data-view-link="home" aria-current="page">Home</a><a href="#logs" data-view-link="logs">Saved logs</a><a href="#reports" data-view-link="reports">Reports</a></nav>
+    <button class="button primary" id="open-upload" type="button">Open a log</button>
   </header>
   <main class="app-shell">
-    <aside class="sidebar" aria-label="Case library">
-      <div class="sidebar-title"><span class="eyebrow">YOUR WORKSPACE</span><button class="icon-button" id="refresh-logs" type="button" aria-label="Refresh saved logs">↻</button></div>
-      <h2>Case files <span id="case-count" class="count">0</span></h2>
-      <div id="logs" class="case-list" aria-live="polite">Loading saved logs…</div>
-      <div class="sidebar-separator"></div>
-      <span class="eyebrow">THE REPLAY LAB</span><p class="sidebar-copy">Three outages. Every clue included.</p>
-      <button class="scenario-link" data-demo="retry-storm" type="button"><span class="scenario-dot coral"></span><span>Retry storm<small>A failure that spreads</small></span><span aria-hidden="true">↗</span></button>
-      <button class="scenario-link" data-demo="token-expiry" type="button"><span class="scenario-dot amber"></span><span>The vanishing session<small>A change before the error</small></span><span aria-hidden="true">↗</span></button>
-      <button class="scenario-link" data-demo="payment-recovery" type="button"><span class="scenario-dot mint"></span><span>Back from the brink<small>Watch recovery unfold</small></span><span aria-hidden="true">↗</span></button>
-      <a class="report-link" href="#report-section">Seven-day incident report <span aria-hidden="true">↓</span></a>
-      <p class="sidebar-foot">Cloud Storage · Firestore · Pub/Sub<br>Vertex AI · BigQuery</p>
-    </aside>
     <div class="workspace">
       <p id="message" class="message" role="status" hidden></p>
       <section id="welcome" class="welcome">
-        <span class="eyebrow accent">LESS GUESSWORK. MORE CLUES.</span>
-        <h1>Go back to the<br>moment it <em>broke.</em></h1>
-        <p class="hero-copy">A wall of logs becomes a story you can explore.<br>Rewind the failure. Follow the request. Find the evidence.</p>
-        <div class="hero-actions"><button class="button primary" data-demo="retry-storm" type="button">Try the time machine <span aria-hidden="true">↗</span></button><button class="button secondary" id="welcome-upload" type="button">Bring your own log</button></div>
-        <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div><div class="time-core">↶</div><span class="art-label art-label-one">first fault</span><span class="art-label art-label-two">retry × 3</span><span class="art-label art-label-three">recovered</span><div class="art-signal signal-one"></div><div class="art-signal signal-two"></div></div>
-        <div class="welcome-footer"><span>01 <strong>Reconstruct</strong></span><span>02 <strong>Rewind</strong></span><span>03 <strong>Investigate</strong></span></div>
+        <span class="eyebrow accent">INCIDENT TIME MACHINE</span>
+        <h1>Understand what went wrong.</h1>
+        <p class="hero-copy">Open a log to replay the incident and explore its AI findings.<br>Or try a demo to see how it works.</p>
+        <div class="hero-actions"><button class="button primary" id="welcome-upload" type="button">Open a log</button><button class="button secondary" data-demo="retry-storm" type="button">Try a demo <span aria-hidden="true">→</span></button></div>
+        <div class="welcome-preview" aria-hidden="true"><span><i class="preview-dot change"></i>Change</span><span class="preview-line"></span><span><i class="preview-dot failure"></i>First failure</span><span class="preview-line"></span><span><i class="preview-dot recovery"></i>Recovery</span></div>
+        <details class="more-demos"><summary>More demos</summary><div class="demo-options"><button class="demo-option" data-demo="token-expiry" type="button"><strong>Token expiry</strong><span>Trace a failed sign-in.</span><span aria-hidden="true">→</span></button><button class="demo-option" data-demo="payment-recovery" type="button"><strong>Payment recovery</strong><span>Follow a service back to health.</span><span aria-hidden="true">→</span></button></div></details>
+      </section>
+      <section id="library" class="library" aria-labelledby="library-title">
+        <div class="panel-heading"><div><h2 id="library-title">Recent logs</h2><p id="library-description">Pick up where you left off.</p></div><div class="library-actions"><span id="case-count" class="count">0</span><button class="icon-button" id="refresh-logs" type="button" aria-label="Refresh saved logs">↻</button><a class="text-button" id="view-all-logs" href="#logs">View all →</a></div></div>
+        <label id="log-search-label" class="log-search" hidden><span class="sr-only">Search saved logs</span><input id="log-search" type="search" placeholder="Search by filename" autocomplete="off"></label>
+        <div id="logs" class="case-list" aria-live="polite">Loading saved logs…</div>
       </section>
       <section id="studio" class="studio" hidden>
-        <div class="studio-heading"><div><div class="eyebrow accent">INCIDENT TIME MACHINE</div><h1 id="filename">Untitled case</h1><div class="case-meta"><span id="source-badge" class="badge">Saved log</span><span id="coverage-label"></span></div></div><div class="studio-actions"><button class="button secondary small" id="save-demo" type="button" hidden>Investigate this scenario</button><button class="button secondary small" id="export-replay" type="button">Export case</button></div></div>
+        <div class="studio-heading"><div><a class="text-button back-link" href="#home">← Home</a><h1 id="filename">Untitled case</h1><div class="case-meta"><span id="source-badge" class="badge">Saved log</span><span id="coverage-label"></span></div></div><div class="studio-actions"><button class="button secondary small" id="save-demo" type="button" hidden>Investigate this scenario</button><button class="button secondary small" id="export-replay" type="button">Export case</button></div></div>
         <div class="case-stats"><div><span class="stat-label">EVENTS</span><strong id="stat-events">0</strong></div><div><span class="stat-label">SERVICES</span><strong id="stat-services">0</strong></div><div><span class="stat-label">ERROR EVENTS</span><strong id="stat-errors">0</strong></div><div><span class="stat-label" id="duration-label">OBSERVED WINDOW</span><strong id="stat-duration">—</strong></div></div>
         <div class="replay-grid">
           <div class="replay-main">
             <section class="network-panel">
-              <div class="panel-heading"><div><span class="eyebrow">THE FAILURE MAP</span><h2>Follow the ripple.</h2></div><label class="trace-field"><span class="sr-only">Filter by request or trace</span><select id="trace-filter" aria-label="Filter by request or trace"><option value="">All requests</option></select></label></div>
+              <div class="panel-heading"><div><h2>Service map</h2><p class="panel-hint">Press play to follow the incident.</p></div><label class="trace-field"><span class="sr-only">Filter by request or trace</span><select id="trace-filter" aria-label="Filter by request or trace"><option value="">All requests</option></select></label></div>
               <div id="service-map" class="service-map" role="group" aria-label="Services and explicit relationships in the log"><svg id="map-edges" aria-hidden="true"></svg><div id="map-nodes"></div></div>
               <div class="map-footer"><div class="legend"><span><i class="activity"></i>Activity</span><span><i class="warning"></i>Warning</span><span><i class="failure"></i>Error</span><span><i class="recovery"></i>Recovery</span></div><span id="map-caption">Connections come from explicit log fields.</span></div>
             </section>
@@ -54,22 +48,23 @@
               <div class="transport"><div class="transport-main"><button class="icon-button" id="step-back" type="button" aria-label="Previous event">←</button><button class="button primary play-button" id="play-replay" type="button">▶ Play replay</button><button class="icon-button" id="step-next" type="button" aria-label="Next event">→</button><label><span class="sr-only">Replay speed</span><select id="replay-speed" aria-label="Replay speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div><div class="jump-controls"><button class="text-button" id="jump-fault" type="button">First fault</button><button class="text-button" id="jump-error" type="button">Next error</button><button class="text-button" id="jump-recovery" type="button">Recovery</button></div></div>
               <div class="current-beat" aria-live="polite"><span id="beat-kind" class="badge">Activity</span><h3 id="beat-title"></h3><p id="beat-description"></p></div>
             </section>
-            <section class="event-panel"><div class="panel-heading"><h2>The event trail</h2><button class="text-button" id="clear-service" type="button" hidden>Clear service filter</button></div><div id="event-list" class="event-list"></div><p id="coverage-note" class="coverage-note"></p></section>
+            <details id="event-trail" class="event-panel"><summary>Event trail <span>Browse individual log entries</span></summary><button class="text-button" id="clear-service" type="button" hidden>Clear service filter</button><div id="event-list" class="event-list"></div></details>
+            <p id="coverage-note" class="coverage-note"></p>
           </div>
           <aside class="inspector" aria-label="Evidence inspector">
             <div class="inspector-tabs" role="tablist" aria-label="Investigation views"><button id="evidence-tab" type="button" role="tab" aria-selected="true" aria-controls="evidence-panel">Evidence</button><button id="investigation-tab" type="button" role="tab" aria-selected="false" aria-controls="investigation-panel">AI findings</button></div>
             <div id="evidence-panel" role="tabpanel" aria-labelledby="evidence-tab">
-              <div class="inspector-body"><span class="eyebrow accent">THE ORIGINAL RECORD</span><h2 id="evidence-service">Select an event</h2><div id="evidence-meta" class="evidence-meta"></div><pre id="evidence-raw" class="evidence-raw"></pre><button class="text-button" id="open-source" type="button">Open in source log ↗</button><div id="evidence-attribution" class="attribution-note"></div></div>
-              <div class="ask-panel"><span class="eyebrow">ASK THE EVIDENCE</span><h3>Every answer needs a clue.</h3><div class="question-chips"><button type="button" data-question="Where did the first failure appear?">First failure?</button><button type="button" data-question="What changed before the failure?">What changed?</button><button type="button" data-question="What does the retry pattern show?">Retry pattern?</button><button type="button" data-question="Was there a recovery?">Recovery?</button></div><form id="question-form"><label for="question" class="sr-only">Search the replay evidence</label><input id="question" maxlength="250" placeholder="Why did checkout fail?" autocomplete="off"><button class="icon-button" type="submit" aria-label="Search replay evidence">↗</button></form><div id="answer" class="answer" aria-live="polite" hidden></div></div>
+              <div class="inspector-body"><span class="eyebrow">SELECTED EVENT</span><h2 id="evidence-service">Select an event</h2><div id="evidence-meta" class="evidence-meta"></div><pre id="evidence-raw" class="evidence-raw"></pre><button class="text-button" id="open-source" type="button">Open in source log ↗</button><div id="evidence-attribution" class="attribution-note"></div></div>
+              <details class="ask-panel"><summary>Explore the evidence</summary><p class="panel-hint">Find changes, retries, or recovery in this log.</p><div class="question-chips"><button type="button" data-question="Where did the first failure appear?">First failure?</button><button type="button" data-question="What changed before the failure?">What changed?</button><button type="button" data-question="What does the retry pattern show?">Retries?</button><button type="button" data-question="Was there a recovery?">Recovery?</button></div><form id="question-form"><label for="question" class="sr-only">Search the replay evidence</label><input id="question" maxlength="250" placeholder="Search a service or request" autocomplete="off"><button class="icon-button" type="submit" aria-label="Search replay evidence">↗</button></form><div id="answer" class="answer" aria-live="polite" hidden></div></details>
             </div>
             <div id="investigation-panel" role="tabpanel" aria-labelledby="investigation-tab" hidden><div class="inspector-body"><span class="eyebrow accent">GEMINI INVESTIGATION</span><p id="investigation-status" role="status"></p><button class="button secondary small" id="retry" type="button" hidden>Retry investigation</button><div id="findings" hidden><span id="severity" class="badge"></span><h3>Summary</h3><p id="summary"></p><h3>Possible cause</h3><p id="cause"></p><h3>Next steps</h3><ul id="recommendations"></ul><div id="hypotheses"></div><p id="model" class="fine-print"></p><p id="history" class="fine-print"></p></div><p class="fine-print">AI hypotheses need review. Valid source references identify evidence; they do not prove a cause.</p></div></div>
           </aside>
         </div>
         <details id="raw-source" class="raw-source"><summary>Source log <span id="source-line-count"></span><span class="fine-print">Original file · numbered evidence</span></summary><pre id="content"></pre></details>
       </section>
-      <section id="report-section" class="report-section"><div class="panel-heading"><div><span class="eyebrow">THE BIGGER PICTURE</span><h2>Seven days of incidents.</h2></div><button class="button secondary small" id="refresh-analytics" type="button">Refresh report</button></div><div id="analytics" role="status"></div><p class="fine-print">Completed AI investigations from BigQuery. Reports refresh at most once per minute.</p></section>
+      <section id="report-section" class="report-section" hidden><div class="panel-heading"><div><h1>Incident reports</h1><p>Completed investigations from the last seven days.</p></div><button class="button secondary small" id="refresh-analytics" type="button">Refresh report</button></div><div id="analytics" role="status"></div><p class="fine-print">Reports refresh at most once per minute.</p></section>
     </div>
   </main>
-  <dialog id="upload-dialog"><form id="upload"><div class="dialog-heading"><div><span class="eyebrow accent">START A NEW CASE</span><h2>Bring the evidence.</h2></div><button class="icon-button" id="close-upload" type="button" aria-label="Close upload">×</button></div><label class="upload-field" for="file"><span class="upload-symbol" aria-hidden="true">↑</span><strong>Choose a log file</strong><span>.txt / .log / .jsonl · UTF-8 · up to 900 KiB</span><input id="file" type="file" accept=".txt,.log,.jsonl" required></label><p class="fine-print">Use synthetic logs for learning. Cloud uploads automatically send log text to Gemini; local replay works without AI.</p><p id="upload-error" class="upload-error" role="alert" hidden></p><button class="button primary upload-submit" type="submit">Upload and investigate ↗</button></form></dialog>
+  <dialog id="upload-dialog"><form id="upload"><div class="dialog-heading"><h2>Open a log</h2><button class="icon-button" id="close-upload" type="button" aria-label="Close upload">×</button></div><label class="upload-field" for="file"><span class="upload-symbol" aria-hidden="true">↑</span><strong>Choose a log file</strong><span>.txt / .log / .jsonl · UTF-8 · up to 900 KiB</span><input id="file" type="file" accept=".txt,.log,.jsonl" required></label><p class="fine-print">Your replay opens immediately. AI findings appear when the investigation finishes. Use synthetic logs for learning.</p><p id="upload-error" class="upload-error" role="alert" hidden></p><button class="button primary upload-submit" type="submit">Upload and investigate</button></form></dialog>
 </body>
 </html>

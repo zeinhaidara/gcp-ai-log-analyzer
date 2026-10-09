@@ -1,3 +1,23 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Incident Desk</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body><main><header><p>GCP AI LOG ANALYZER / PHASE 1</p><h1>Incident Desk</h1><p>Upload a log. Find the signals. Start your investigation.</p></header><section><h2>Upload a log</h2><form id="upload"><label for="file">UTF-8 .txt file, up to 900 KiB</label><input id="file" type="file" accept=".txt" required><button>Process log</button></form><p id="message" role="status"></p></section><section><h2>Recent logs</h2><p>Counts identify lines containing ERROR or WARN. AI investigation arrives in a later phase.</p><div id="logs"></div></section><section id="detail" hidden><h2 id="filename"></h2><pre id="content"></pre></section></main></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Incident Desk</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body><main>
+  <header><p>GCP AI LOG ANALYZER</p><h1>Incident Desk</h1><p>Upload a log. Find the signals. Review the investigation.</p></header>
+  <section><h2>Upload a log</h2><p>Use synthetic logs for learning. The agent sends log text to Gemini.</p>
+    <form id="upload"><label for="file">UTF-8 .txt file, up to 900 KiB</label><input id="file" type="file" accept=".txt" required><button>Upload and investigate</button></form>
+    <p id="message" role="status"></p>
+  </section>
+  <section><h2>Recent logs</h2><p>Counts identify lines containing ERROR or WARN. Select a log to see its findings.</p><div id="logs"></div></section>
+  <section id="detail" hidden>
+    <h2 id="filename"></h2><h3>AI investigation</h3>
+    <p id="investigation-status" role="status"></p><button id="retry" hidden>Retry investigation</button>
+    <div id="findings" hidden>
+      <p>Severity: <strong id="severity"></strong></p><p id="summary"></p>
+      <h3>Likely cause</h3><p id="cause"></p><h3>Suggested next steps</h3><ul id="recommendations"></ul><p id="model"></p>
+    </div>
+    <h3>Raw log</h3><pre id="content"></pre>
+  </section>
+</main></body></html>

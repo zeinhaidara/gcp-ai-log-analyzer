@@ -1,5 +1,7 @@
 """Persistence adapters; raw cloud log content lives only in Cloud Storage."""
 import os
+import base64
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -44,10 +46,16 @@ class SQLiteLogStore:
         except sqlite3.Error as error:
             raise StorageUnavailable() from error
 
+    def investigation(self, log_id):
+        return {"status": "disabled"} if self.get(log_id) else None
+
+    def enqueue(self, log_id):
+        return {"status": "disabled"}
+
 
 class GCPLogStore:
-    def __init__(self, project, bucket, database="log-analyzer", collection="logs",
-                 firestore_client=None, storage_client=None):
+    def __init__(self, project, bucket, database="(default)", collection="logs",
+                 firestore_client=None, storage_client=None, topic=None, publish_client=None):
         # Local SQLite use requires neither Google libraries nor cloud credentials.
         from google.api_core.exceptions import GoogleAPICallError, RetryError
         from google.auth.exceptions import GoogleAuthError
@@ -61,6 +69,47 @@ class GCPLogStore:
         self.storage = storage_client if storage_client is not None else storage.Client(project=project)
         self.collection = self.firestore.collection(collection)
         self.bucket = self.storage.bucket(bucket)
+        self.topic = topic
+        self.project = project
+        self.publisher = publish_client
+        if topic and self.publisher is None:
+            # Reuse attached ADC; synchronous REST keeps publishing bounded without
+            # background publisher threads or another application dependency.
+            import google.auth
+            from google.auth.transport.requests import AuthorizedSession
+            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/pubsub"])
+            self.publisher = AuthorizedSession(credentials)
+
+    def enqueue(self, log_id):
+        if not self.topic:
+            return {"status": "disabled"}
+        data = base64.b64encode(json.dumps({"log_id": log_id}).encode()).decode()
+        try:
+            response = self.publisher.post(
+                f"https://pubsub.googleapis.com/v1/projects/{self.project}/topics/{self.topic}:publish",
+                json={"messages": [{"data": data}]}, timeout=10)
+            response.raise_for_status()
+            if not response.json().get("messageIds"):
+                raise ValueError("Missing publication receipt")
+            return {"status": "queued"}
+        except self.cloud_errors + (ValueError,) as error:
+            raise StorageUnavailable() from error
+
+    def investigation(self, log_id):
+        try:
+            # Polling reads metadata only, never downloads the raw file again.
+            if not self.collection.document(log_id).get(timeout=10, retry=None).exists:
+                return None
+            if not self.topic:
+                return {"status": "disabled"}
+            document = self.firestore.collection("investigations").document(log_id).get(timeout=10, retry=None)
+            if not document.exists:
+                return {"status": "waiting"}
+            data = document.to_dict()
+            # Do not expose the worker's lease or internal identity.
+            return {key: data[key] for key in ("status", "findings", "model", "completed_at", "truncated") if key in data}
+        except self.cloud_errors + (KeyError, TypeError) as error:
+            raise StorageUnavailable() from error
 
     def save(self, record):
         object_name = f"logs/{record['id']}.txt"
@@ -121,6 +170,9 @@ def create_store(database=None):
     collection = os.environ.get("FIRESTORE_COLLECTION", "logs")
     if not collection or "/" in collection:
         raise ValueError("FIRESTORE_COLLECTION must be a single collection name.")
+    topic = os.environ.get("INVESTIGATION_TOPIC")
+    if topic and "/" in topic:
+        raise ValueError("INVESTIGATION_TOPIC must be a topic ID.")
     return GCPLogStore(project, bucket,
-                       database=os.environ.get("FIRESTORE_DATABASE", "log-analyzer"),
-                       collection=collection)
+                       database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+                       collection=collection, topic=topic)

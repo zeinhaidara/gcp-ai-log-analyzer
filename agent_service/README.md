@@ -4,7 +4,7 @@ Zein owns this service. Mahmoud owns the dashboard and its CI/CD. Branch workflo
 
 The service receives authenticated Pub/Sub push requests, retrieves the uploaded raw log from Cloud Storage, runs one ADK/Gemini investigation, persists structured findings in Firestore, and appends a summary to BigQuery using a load job.
 
-Verified on October 8, 2026: the private service is deployed with image tag `zein-adk-1`. Synthetic upload `e91426a5-057f-4a4c-b4bb-cebfd00bb888` completed through Pub/Sub, Gemini (`gemini-3.1-flash-lite`), Firestore and BigQuery. Republishing the completed log produced exactly one incident row. Seven unit tests and `pip check` passed. Automatic dashboard publishing and displaying investigation findings remain Mahmoud's app work. This agent image was built locally; the dashboard CI/CD does not yet build, test or scan this separate image.
+Verified on October 8, 2026: the private service is deployed with image tag `zein-adk-1`. Synthetic upload `e91426a5-057f-4a4c-b4bb-cebfd00bb888` completed through Pub/Sub, Gemini (`gemini-3.1-flash-lite`), Firestore and BigQuery. Republishing the completed log produced exactly one incident row. Seven unit tests and `pip check` passed. The dashboard now automatically publishes uploads and displays findings. Both service images are tested, audited, built and scanned by the two root Cloud Build configurations before release.
 
 ```mermaid
 flowchart LR
@@ -19,15 +19,11 @@ flowchart LR
   Results --> API[Dashboard API]
 ```
 
-## Deploy from PowerShell
+## Automatic deployment
 
-Docker Desktop and an authenticated `gcloud.cmd` are required. From this directory:
+The root `cloudbuild-ci.yaml` validates both services on PRs into `dev` or `main`. The root `cloudbuild.yaml` publishes scanned images and deploys both services on pushes to `dev`, using the existing build identity. The agent deploys first; the dashboard deploys second. Model, identities and resource settings are substitutions in that YAML. No new pipeline folders or infrastructure provisioning steps are needed.
 
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\Deploy-Agent.ps1 -Tag YOUR_COMMIT_SHA
-```
-
-This builds and tests the image, pushes to the existing registry, creates the table if missing, grants the agent BigQuery job creation, deploys the private service, grants the push account invocation access, and converts the existing pull subscription to authenticated push. It preserves the existing dead-letter and retry configuration. No Terraform, VPC, API keys or service-account key files are used.
+`Deploy-Agent.ps1` is the original one-time bootstrap script; routine releases use Cloud Build and do not rerun its IAM/table/subscription setup.
 
 | Setting | Value |
 |---|---|
@@ -55,7 +51,9 @@ After successfully storing `logs/{UUID}.txt` and its `logs/{UUID}` Firestore doc
 {"log_id":"8f99913a-fb03-43d4-9427-9fb9716d236f"}
 ```
 
-Use `google-cloud-pubsub` in the dashboard, its existing runtime identity, and `publisher.publish(topic_path, json.dumps({"log_id": record["id"]}).encode()).result(timeout=10)`. The dashboard identity already has publisher access. Handle publish failures separately from successful uploads; do not create another upload on a publishing retry. Add an API route that reads `investigations/{log_id}` and show `processing`, `retrying`, or `completed` and its `findings`. No investigation document exists until a message arrives. Polling the API is sufficient initially. These dashboard changes are intentionally not included on Zein's branch.
+The dashboard publishes through the Pub/Sub REST API using its attached runtime identity. Publish failures keep the saved log ID; `POST /investigations/{log_id}` retries without another upload. `GET /investigations/{log_id}` returns status/findings without downloading raw content on each poll. No investigation document exists until the message reaches the agent.
+
+To verify automatic upload-to-findings integration, run `Smoke-Test.ps1` without `-LogId`; it uploads one synthetic log and waits for the result and one BigQuery row. It does not manually publish after an automatic upload.
 
 For an existing uploaded log, manually start an investigation:
 

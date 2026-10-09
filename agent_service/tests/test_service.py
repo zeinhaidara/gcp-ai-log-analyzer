@@ -14,6 +14,40 @@ def message(data):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_classification(self):
+        self.assertEqual(service.classify_log("INFO orders started\nERROR database timed out"), ("orders", "database_timeout"))
+        self.assertEqual(service.classify_log("ERROR expired_token 401"), ("unknown", "authentication"))
+        self.assertEqual(service.classify_log("INFO checkout started\nERROR payment timeout"), ("checkout", "payment_timeout"))
+
+    def test_history_failure_still_completes_investigation(self):
+        import asyncio
+        db, objects, analytics = Mock(), Mock(), Mock()
+        blob = objects.bucket.return_value.blob.return_value
+        blob.size = 100
+        blob.download_as_bytes.return_value = b"INFO orders started\nERROR database timeout"
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", side_effect=TimeoutError()), patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned") as save, patch.object(service, "export_analytics") as export, patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        model.assert_awaited_once_with("INFO orders started\nERROR database timeout", [])
+        self.assertFalse(save.call_args_list[0].args[-1]["history_available"])
+        self.assertEqual(save.call_args_list[-1].args[-1]["status"], "completed")
+        export.assert_called_once()
+
+    def test_history_query_is_parameterized_bounded_and_truncated(self):
+        from types import SimpleNamespace
+        analytics = Mock()
+        analytics.query.return_value.result.return_value = [SimpleNamespace(log_id="prior", severity="error", summary="x" * 3000)]
+        with patch.dict(service.os.environ, {"BIGQUERY_TABLE": "test-project.demo.incidents"}):
+            result = service.historical_incidents(analytics, LOG_ID, "orders", "database_timeout")
+        self.assertEqual(len(result[0]["summary"]), 2000)
+        query = analytics.query.call_args.args[0]
+        self.assertIn("log_id != @log_id", query)
+        self.assertIn("INTERVAL 7 DAY", query)
+        self.assertIn("LIMIT 5", query)
+        config = analytics.query.call_args.kwargs["job_config"]
+        self.assertEqual(config.maximum_bytes_billed, 52428800)
+        self.assertEqual(config.query_parameters[1].value, "orders")
+
     def setUp(self):
         self.client = TestClient(service.app)
 

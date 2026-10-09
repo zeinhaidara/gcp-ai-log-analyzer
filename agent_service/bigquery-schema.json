@@ -3,5 +3,7 @@
   {"name":"completed_at","type":"TIMESTAMP","mode":"REQUIRED"},
   {"name":"severity","type":"STRING","mode":"REQUIRED"},
   {"name":"summary","type":"STRING","mode":"REQUIRED"},
-  {"name":"model","type":"STRING","mode":"REQUIRED"}
+  {"name":"model","type":"STRING","mode":"REQUIRED"},
+  {"name":"service_name","type":"STRING","mode":"NULLABLE"},
+  {"name":"failure_category","type":"STRING","mode":"NULLABLE"}
 ]

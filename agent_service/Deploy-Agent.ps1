@@ -34,9 +34,11 @@ try {
         & "$sdkBin\bq.cmd" --project_id=$project --location=$region mk --table --expiration=0 --time_partitioning_field=completed_at --time_partitioning_type=DAY --time_partitioning_expiration=604800 "$project`:log_analyzer_dev.incidents" bigquery-schema.json
         if ($LASTEXITCODE -ne 0) { throw 'Table creation failed' }
     }
+    & "$sdkBin\bq.cmd" --project_id=$project update --expiration=0 "$project`:log_analyzer_dev.incidents" bigquery-schema.json
+    if ($LASTEXITCODE -ne 0) { throw 'Additive table schema update failed' }
     # Dataset write access already exists; load jobs additionally require jobs.create.
     Run-Gcloud projects add-iam-policy-binding $project "--member=serviceAccount:$agentAccount" --role=roles/bigquery.jobUser --condition=None --quiet
-    Run-Gcloud run deploy $service --project=$project --region=$region --image=$image --service-account=$agentAccount --no-allow-unauthenticated --min-instances=0 --max-instances=1 --concurrency=1 --cpu=1 --memory=1Gi --timeout=180 --set-env-vars="GOOGLE_CLOUD_PROJECT=$project,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=$Model,LOG_BUCKET=$project-raw-logs-dev,FIRESTORE_DATABASE=(default),FIRESTORE_COLLECTION=logs,BIGQUERY_TABLE=$project.log_analyzer_dev.incidents,BIGQUERY_LOCATION=$region" --quiet
+    Run-Gcloud run deploy $service --project=$project --region=$region --image=$image --service-account=$agentAccount --no-allow-unauthenticated --network=log-analyzer-dev-vpc --subnet=log-analyzer-dev-subnet --vpc-egress=all-traffic --network-tags=log-analyzer-dev --min-instances=0 --max-instances=1 --concurrency=1 --cpu=1 --memory=1Gi --timeout=180 --set-env-vars="GOOGLE_CLOUD_PROJECT=$project,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=$Model,LOG_BUCKET=$project-raw-logs-dev,FIRESTORE_DATABASE=(default),FIRESTORE_COLLECTION=logs,BIGQUERY_TABLE=$project.log_analyzer_dev.incidents,BIGQUERY_LOCATION=$region" --quiet
     Run-Gcloud run services add-iam-policy-binding $service --project=$project --region=$region "--member=serviceAccount:$pushAccount" --role=roles/run.invoker --quiet
     $serviceUrl = & $gcpCli run services describe $service --project=$project --region=$region --format='value(status.url)'
     if ($LASTEXITCODE -ne 0 -or !$serviceUrl) { throw 'Service URL lookup failed' }

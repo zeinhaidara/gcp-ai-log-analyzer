@@ -11,12 +11,13 @@
     <p id="message" role="status"></p>
   </section>
   <section><h2>Recent logs</h2><p>Counts identify lines containing ERROR or WARN. Select a log to see its findings.</p><div id="logs"></div></section>
+  <section><h2>Incident reporting</h2><p>Completed AI investigations in the last seven days. Reports refresh at most once per minute.</p><button id="refresh-analytics" type="button">Refresh report</button><div id="analytics" role="status"></div></section>
   <section id="detail" hidden>
     <h2 id="filename"></h2><h3>AI investigation</h3>
     <p id="investigation-status" role="status"></p><button id="retry" hidden>Retry investigation</button>
     <div id="findings" hidden>
       <p>Severity: <strong id="severity"></strong></p><p id="summary"></p>
-      <h3>Likely cause</h3><p id="cause"></p><h3>Suggested next steps</h3><ul id="recommendations"></ul><p id="model"></p>
+      <h3>Likely cause</h3><p id="cause"></p><h3>Suggested next steps</h3><ul id="recommendations"></ul><p id="model"></p><p id="history"></p>
     </div>
     <h3>Raw log</h3><pre id="content"></pre>
   </section>

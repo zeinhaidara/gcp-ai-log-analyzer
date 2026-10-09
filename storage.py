@@ -2,6 +2,7 @@
 import os
 import base64
 import json
+import logging
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -91,23 +92,34 @@ class GCPLogStore:
             response.raise_for_status()
             if not response.json().get("messageIds"):
                 raise ValueError("Missing publication receipt")
+            self.collection.document(log_id).update({"investigation_dispatch": "queued"}, timeout=10, retry=None)
             return {"status": "queued"}
         except self.cloud_errors + (ValueError,) as error:
+            try:
+                self.collection.document(log_id).update({"investigation_dispatch": "enqueue_failed"}, timeout=10, retry=None)
+            except self.cloud_errors:
+                logging.error("Unable to record investigation publication failure")
             raise StorageUnavailable() from error
 
     def investigation(self, log_id):
         try:
             # Polling reads metadata only, never downloads the raw file again.
-            if not self.collection.document(log_id).get(timeout=10, retry=None).exists:
+            upload = self.collection.document(log_id).get(timeout=10, retry=None)
+            if not upload.exists:
                 return None
             if not self.topic:
                 return {"status": "disabled"}
             document = self.firestore.collection("investigations").document(log_id).get(timeout=10, retry=None)
             if not document.exists:
-                return {"status": "waiting"}
+                metadata = upload.to_dict()
+                status = metadata.get("investigation_dispatch", "waiting") if isinstance(metadata, dict) else "waiting"
+                result = {"status": status}
+                if status == "enqueue_failed":
+                    result["error"] = "Upload saved. Retry the investigation without uploading again."
+                return result
             data = document.to_dict()
             # Do not expose the worker's lease or internal identity.
-            return {key: data[key] for key in ("status", "findings", "model", "completed_at", "truncated") if key in data}
+            return {key: data[key] for key in ("status", "findings", "model", "completed_at", "truncated", "service_name", "failure_category", "history_count", "history_available") if key in data}
         except self.cloud_errors + (KeyError, TypeError) as error:
             raise StorageUnavailable() from error
 

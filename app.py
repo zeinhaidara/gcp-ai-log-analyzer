@@ -5,12 +5,17 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from storage import StorageUnavailable, create_store
+from analytics import incident_analytics
+from investigations import create_investigations, InvestigationUnavailable, InvestigationNotFound
 
 MAX_BODY = 1024 * 1024
 
 
-def create_app(database=None, store=None):
+def create_app(database=None, store=None, analytics=None, investigations=None):
     store = store if store is not None else create_store(database)
+    analytics = analytics if analytics is not None else incident_analytics
+    supplied_investigations = investigations
+    investigations = investigations if investigations is not None else create_investigations(store)
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
@@ -25,6 +30,8 @@ def create_app(database=None, store=None):
             return respond(start_response, "200 OK", (Path(__file__).parent / "static" / name).read_text(encoding="utf-8"), mime)
         if method == "GET" and path == "/health":
             return respond(start_response, "200 OK", {"status": "ok"})
+        if method == "GET" and path == "/analytics":
+            return respond(start_response, "200 OK", analytics())
         if path == "/logs" and method == "POST":
             try:
                 length = int(environ.get("CONTENT_LENGTH") or 0)
@@ -46,8 +53,28 @@ def create_app(database=None, store=None):
                 store.save(record)
             except StorageUnavailable:
                 return unavailable(start_response)
-            record["investigation"] = enqueue(record["id"])
+            if supplied_investigations is None:
+                record["investigation"] = enqueue(record["id"])
+            else:
+                try:
+                    record["investigation"] = investigations.queue(record["id"])
+                except (InvestigationUnavailable, InvestigationNotFound):
+                    record["investigation"] = {"status": "dispatch_failed", "message": "Upload saved. Retry the investigation without uploading again."}
             return respond(start_response, "201 Created", record)
+        if path.startswith("/logs/") and path.endswith("/investigation") and method in ("GET", "POST"):
+            log_id = path.removeprefix("/logs/").removesuffix("/investigation")
+            try:
+                if str(uuid.UUID(log_id)) != log_id:
+                    raise ValueError()
+            except ValueError:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            try:
+                result = investigations.queue(log_id) if method == "POST" else investigations.get(log_id)
+                return respond(start_response, "202 Accepted" if method == "POST" else "200 OK", result)
+            except InvestigationNotFound:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            except InvestigationUnavailable:
+                return respond(start_response, "503 Service Unavailable", {"error": "Investigation temporarily unavailable. Retry using this saved log."})
         if path.startswith("/investigations/") and method in ("GET", "POST"):
             log_id = path.removeprefix("/investigations/")
             try:
@@ -61,7 +88,7 @@ def create_app(database=None, store=None):
                 return unavailable(start_response)
             if result is None:
                 return respond(start_response, "404 Not Found", {"error": "Log not found."})
-            if method == "POST" and result["status"] not in ("completed", "processing", "disabled"):
+            if method == "POST" and result["status"] not in ("completed", "processing", "queued", "disabled"):
                 result = enqueue(log_id)
                 if result["status"] == "enqueue_failed":
                     return respond(start_response, "503 Service Unavailable", result)

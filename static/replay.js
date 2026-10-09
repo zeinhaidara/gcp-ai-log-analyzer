@@ -60,7 +60,7 @@ class ReplayStudio {
     this.lines = record.content.split(/\r\n|\n|\r/);
     this.$('#welcome').hidden = true; this.$('#studio').hidden = false;
     this.$('#filename').textContent = record.filename;
-    this.$('#source-badge').textContent = record.demo ? 'Synthetic scenario · unsaved' : 'Saved log';
+    this.$('#source-badge').textContent = record.demo ? 'Demo log · synthetic example' : 'Saved log';
     this.$('#save-demo').hidden = !record.demo;
     this.$('#raw-source').open = false; this.$('#content').replaceChildren();
     this.$('#event-trail').open = false; this.$('.ask-panel').open = false;

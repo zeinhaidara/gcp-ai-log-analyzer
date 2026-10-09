@@ -23,7 +23,7 @@
         <p class="hero-copy">Open a log to replay the incident and explore its AI findings.<br>Or try a demo to see how it works.</p>
         <div class="hero-actions"><button class="button primary" id="welcome-upload" type="button">Open a log</button><button class="button secondary" data-demo="retry-storm" type="button">Try a demo <span aria-hidden="true">→</span></button></div>
         <div class="welcome-preview" aria-hidden="true"><span><i class="preview-dot change"></i>Change</span><span class="preview-line"></span><span><i class="preview-dot failure"></i>First failure</span><span class="preview-line"></span><span><i class="preview-dot recovery"></i>Recovery</span></div>
-        <details class="more-demos"><summary>More demos</summary><div class="demo-options"><button class="demo-option" data-demo="token-expiry" type="button"><strong>Token expiry</strong><span>Trace a failed sign-in.</span><span aria-hidden="true">→</span></button><button class="demo-option" data-demo="payment-recovery" type="button"><strong>Payment recovery</strong><span>Follow a service back to health.</span><span aria-hidden="true">→</span></button></div></details>
+        <details class="more-demos"><summary>More demo logs</summary><p class="demo-note">Sample incidents for exploring the replay. These aren't your uploaded logs.</p><div class="demo-options"><button class="demo-option" data-demo="token-expiry" type="button"><strong>Token expiry</strong><span>Trace a failed sign-in.</span><span aria-hidden="true">→</span></button><button class="demo-option" data-demo="payment-recovery" type="button"><strong>Payment recovery</strong><span>Follow a service back to health.</span><span aria-hidden="true">→</span></button></div></details>
       </section>
       <section id="library" class="library" aria-labelledby="library-title">
         <div class="panel-heading"><div><h2 id="library-title">Recent logs</h2><p id="library-description">Pick up where you left off.</p></div><div class="library-actions"><span id="case-count" class="count">0</span><button class="icon-button" id="refresh-logs" type="button" aria-label="Refresh saved logs">↻</button><a class="text-button" id="view-all-logs" href="#logs">View all →</a></div></div>
@@ -41,7 +41,9 @@
               <div class="map-footer"><div class="legend"><span><i class="activity"></i>Activity</span><span><i class="warning"></i>Warning</span><span><i class="failure"></i>Error</span><span><i class="recovery"></i>Recovery</span></div><span id="map-caption">Connections come from explicit log fields.</span></div>
             </section>
             <section class="timeline-panel">
-              <div class="panel-heading"><div><span class="eyebrow" id="clock-label">RECORDED TIME</span><div id="replay-clock" class="replay-clock">—</div></div><span id="event-position" class="position-label">Event 0 / 0</span></div>
+              <h2>Incident timeline</h2><p class="panel-hint">Play the log or move the slider to inspect an event.</p>
+              <div class="panel-heading timeline-heading"><div><span class="eyebrow" id="clock-label">RECORDED TIME</span><div id="replay-clock" class="replay-clock">—</div></div><span id="event-position" class="position-label">Event 0 / 0</span></div>
+              <p class="track-note">Bars show log activity. Red marks errors; green marks success or recovery.</p>
               <svg id="event-track" class="event-track" role="img" aria-label="Event distribution across the replay"></svg>
               <label for="timeline" class="sr-only">Scrub the incident timeline</label><input id="timeline" type="range" min="0" max="0" value="0" step="1" aria-label="Scrub the incident timeline">
               <div class="timeline-endpoints"><span id="time-start">Start</span><span id="time-end">End</span></div>

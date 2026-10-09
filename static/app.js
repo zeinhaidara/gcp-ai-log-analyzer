@@ -12,7 +12,7 @@ function showView(view) {
   $('#studio').hidden = view !== 'case';
   $('#report-section').hidden = view !== 'reports';
   $('#library-title').textContent = view === 'logs' ? 'Saved logs' : 'Recent logs';
-  $('#library-description').textContent = view === 'logs' ? 'Choose a log to open its replay and AI findings.' : 'Pick up where you left off.';
+  $('#library-description').textContent = view === 'logs' ? 'Your saved uploads. Choose a file to open its replay and AI findings.' : 'Your latest saved uploads.';
   $('#log-search-label').hidden = view !== 'logs';
   $('#view-all-logs').hidden = view !== 'home' || savedLogs.length <= 3;
   document.querySelectorAll('[data-view-link]').forEach(link => {

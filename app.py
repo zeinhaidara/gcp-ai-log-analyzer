@@ -5,12 +5,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from storage import StorageUnavailable, create_store
+from analytics import incident_analytics
 
 MAX_BODY = 1024 * 1024
 
 
-def create_app(database=None, store=None):
+def create_app(database=None, store=None, analytics=None):
     store = store if store is not None else create_store(database)
+    analytics = analytics if analytics is not None else incident_analytics
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()
@@ -25,6 +27,8 @@ def create_app(database=None, store=None):
             return respond(start_response, "200 OK", (Path(__file__).parent / "static" / name).read_text(encoding="utf-8"), mime)
         if method == "GET" and path == "/health":
             return respond(start_response, "200 OK", {"status": "ok"})
+        if method == "GET" and path == "/analytics":
+            return respond(start_response, "200 OK", analytics())
         if path == "/logs" and method == "POST":
             try:
                 length = int(environ.get("CONTENT_LENGTH") or 0)

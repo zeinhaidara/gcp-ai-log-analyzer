@@ -2,7 +2,7 @@
 
 Zein owns this service. Mahmoud owns the dashboard and its CI/CD. Branch workflow: `zein/adk` -> PR to `dev` -> PR to protected `main`.
 
-The service receives authenticated Pub/Sub push requests, retrieves the uploaded raw log from Cloud Storage, runs one ADK/Gemini investigation, persists structured findings in Firestore, and appends a summary to BigQuery using a load job.
+The service receives authenticated Pub/Sub push requests, retrieves the uploaded raw log from Cloud Storage, looks up up to five related incidents from the last seven days in BigQuery, runs one ADK/Gemini investigation, persists structured findings in Firestore, and appends a summary to BigQuery using a load job. History lookup uses fixed, parameterized SQL with a 50 MiB billing cap; failure falls back to the current log alone.
 
 Verified on October 8, 2026: the private service is deployed with image tag `zein-adk-1`. Synthetic upload `e91426a5-057f-4a4c-b4bb-cebfd00bb888` completed through Pub/Sub, Gemini (`gemini-3.1-flash-lite`), Firestore and BigQuery. Republishing the completed log produced exactly one incident row. Seven unit tests and `pip check` passed. Automatic dashboard publishing and displaying investigation findings remain Mahmoud's app work. This agent image was built locally; the dashboard CI/CD does not yet build, test or scan this separate image.
 
@@ -27,7 +27,7 @@ Docker Desktop and an authenticated `gcloud.cmd` are required. From this directo
 powershell.exe -ExecutionPolicy Bypass -File .\Deploy-Agent.ps1 -Tag YOUR_COMMIT_SHA
 ```
 
-This builds and tests the image, pushes to the existing registry, creates the table if missing, grants the agent BigQuery job creation, deploys the private service, grants the push account invocation access, and converts the existing pull subscription to authenticated push. It preserves the existing dead-letter and retry configuration. No Terraform, VPC, API keys or service-account key files are used.
+This builds and tests the image, pushes to the existing registry, creates the table if missing or adds nullable schema fields, grants the agent BigQuery job creation, deploys the private service, grants the push account invocation access, and configures authenticated push. It preserves the existing dead-letter and retry configuration. Provision `infra/Configure-Network.ps1` first; deployments now preserve Direct VPC egress through private Google API DNS. No Terraform, API keys or service-account key files are used. See the [network and analytics handoff](../infra/Analytics-VPC-handoff.md).
 
 | Setting | Value |
 |---|---|
@@ -63,7 +63,7 @@ For an existing uploaded log, manually start an investigation:
 powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
-Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, and `truncated`. BigQuery contains log_id, completed_at, severity, summary, and model. Raw content stays in Cloud Storage.
+Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
 
 ## Limits and recovery
 

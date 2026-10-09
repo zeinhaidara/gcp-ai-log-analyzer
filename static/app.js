@@ -40,3 +40,25 @@ document.querySelector('#upload').onsubmit = async event => {
   finally { button.disabled = false; }
 };
 refresh().catch(error => { message.textContent = error.message; });
+async function refreshAnalytics() {
+  const target = document.querySelector('#analytics');
+  try {
+    const report = await request('/analytics');
+    target.replaceChildren();
+    if (!report.enabled) { target.textContent = report.message; return; }
+    const total = document.createElement('p');
+    total.textContent = `${report.total} completed investigations in the last ${report.days} days`;
+    target.append(total);
+    for (const [title, values] of [['Severity', report.severity], ['Daily incidents', report.daily], ['Failure categories', report.categories], ['Services', report.services]]) {
+      const heading = document.createElement('h3'); heading.textContent = title;
+      const list = document.createElement('ul');
+      for (const [name, count] of Object.entries(values)) {
+        const item = document.createElement('li'); item.textContent = `${name}: ${count}`; list.append(item);
+      }
+      if (!list.children.length) { const item = document.createElement('li'); item.textContent = 'No investigations yet'; list.append(item); }
+      target.append(heading, list);
+    }
+  } catch { target.textContent = 'Incident reporting is temporarily unavailable.'; }
+}
+document.querySelector('#refresh-analytics').onclick = refreshAnalytics;
+refreshAnalytics();

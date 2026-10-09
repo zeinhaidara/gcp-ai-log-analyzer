@@ -8,7 +8,7 @@ steps:
   - |
     pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
     python -m unittest discover -s tests -v
-    bandit -q app.py storage.py
+    bandit -q app.py storage.py analytics.py
     pip-audit -r requirements.txt --progress-spinner off
 - id: build
   name: gcr.io/cloud-builders/docker
@@ -38,8 +38,12 @@ steps:
   - --memory=512Mi
   - --min-instances=0
   - --max-instances=${_MAX_INSTANCES}
+  - --network=${_VPC_NETWORK}
+  - --subnet=${_VPC_SUBNET}
+  - --vpc-egress=all-traffic
+  - --network-tags=log-analyzer-dev
   - --update-labels=${_LABELS}
-  - --set-env-vars=STORAGE_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,LOG_BUCKET=${_LOG_BUCKET},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},FIRESTORE_COLLECTION=${_FIRESTORE_COLLECTION}
+  - --set-env-vars=STORAGE_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,LOG_BUCKET=${_LOG_BUCKET},FIRESTORE_DATABASE=${_FIRESTORE_DATABASE},FIRESTORE_COLLECTION=${_FIRESTORE_COLLECTION},BIGQUERY_TABLE=${_BIGQUERY_TABLE},BIGQUERY_LOCATION=${_REGION}
   - --quiet
 substitutions:
   _REGION: us-central1
@@ -51,6 +55,9 @@ substitutions:
   _FIRESTORE_DATABASE: (default)
   _FIRESTORE_COLLECTION: logs
   _MAX_INSTANCES: '1'
+  _BIGQUERY_TABLE: ${PROJECT_ID}.log_analyzer_dev.incidents
+  _VPC_NETWORK: log-analyzer-dev-vpc
+  _VPC_SUBNET: log-analyzer-dev-subnet
   _LABELS: app=log-analyzer,environment=dev,owner=mahmoud,managed-by=cloud-build
 tags: [log-analyzer, dev, mahmoud]
 options:

@@ -2,6 +2,8 @@
 
 A learning app: upload a `.txt` log, count ERROR/WARN lines, and view previous uploads. A separate [ADK investigation service](agent_service/README.md) analyzes logs with Gemini and exports findings to Firestore and BigQuery. Automatic publishing and displaying findings in the dashboard remain app integration work.
 
+The dashboard now includes seven-day BigQuery incident reporting. The agent compares each new investigation with up to five recent matching incidents. See the [analytics and VPC handoff](infra/Analytics-VPC-handoff.md) for data flow, networking, access and CI/CD settings.
+
 ## The flow
 
 ```mermaid
@@ -65,7 +67,7 @@ The app uses its attached service account automatically; no JSON keys or GitHub 
 
 Deployment settings are the `substitutions` at the bottom of `cloudbuild.yaml`. Override them in a trigger without editing the app: `_REGION`, `_IMAGE`, `_SERVICE`, `_RUNTIME_SERVICE_ACCOUNT`, `_LOG_BUCKET`, `_FIRESTORE_DATABASE`, `_FIRESTORE_COLLECTION`, and `_MAX_INSTANCES`. `_REPOSITORY` supplies the default image path. These are resource settings, not secrets. For example, set `_MAX_INSTANCES=2` in the trigger. Keep future secrets in Secret Manager and grant access only to the runtime account that needs them.
 
-The deployed app requires GCP authentication. Open its [Cloud Run page](https://console.cloud.google.com/run/detail/us-central1/log-analyzer-dev/metrics?project=ai-log-analyzer-511017) to inspect revisions and logs. For the dashboard, run `gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080`, then open `http://localhost:8080`. The signed-in account needs Cloud Run Invoker. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
+The development dashboard is public at [log-analyzer-dev](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app/). The agent remains authenticated. Open the [Cloud Run page](https://console.cloud.google.com/run/detail/us-central1/log-analyzer-dev/metrics?project=ai-log-analyzer-511017) to inspect revisions and logs. Upload a synthetic log and inspect its object in Storage and record in Firestore to see the connections. Builds and cloud resources may incur charges.
 
 The Cloud Run service is labeled `app=log-analyzer`, `environment=dev`, `owner=mahmoud`, and `managed-by=cloud-build`. `_LABELS` preserves these values on future deployments and can be overridden in the trigger. Build records also have searchable app/environment/owner tags. Labels identify resources; they do not grant access.
 

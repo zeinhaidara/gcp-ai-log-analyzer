@@ -26,6 +26,13 @@ class AppTests(unittest.TestCase):
     def test_health(self):
         self.assertEqual(self.request("/health"), ("200 OK", {"status": "ok"}))
 
+    def test_analytics_returns_aggregate_report(self):
+        report = {"enabled": True, "total": 2, "severity": {"error": 2}}
+        source = Mock(return_value=report)
+        self.app = create_app(self.database, analytics=source)
+        self.assertEqual(self.request("/analytics"), ("200 OK", report))
+        source.assert_called_once_with()
+
     def test_upload_list_detail_and_persistence(self):
         status, log = self.request("/logs", "POST", {"filename": "api.txt", "content": "ERROR timeout\nWARN retry\nINFO ready"})
         self.assertEqual(status, "201 Created")

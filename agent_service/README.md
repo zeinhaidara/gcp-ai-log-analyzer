@@ -78,3 +78,14 @@ References: [ADK deployment](https://google.github.io/adk-docs/deploy/cloud-run/
 ## Historical incident context and VPC
 
 Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../infra/Analytics-VPC-handoff.md).
+
+```mermaid
+flowchart LR
+  PubSub[Pub/Sub] -->|authenticated HTTPS push| Agent[Cloud Run ADK agent]
+  Agent -->|Direct VPC egress| Subnet["VPC subnet: 10.42.0.0/24"]
+  Subnet --> Firewall[API HTTPS firewall]
+  Firewall --> Access[Private Google Access]
+  Access --> APIs["Storage · Firestore · BigQuery · Vertex AI"]
+```
+
+The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../README.md#vpc-network-layer).

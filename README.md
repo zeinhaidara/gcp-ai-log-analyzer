@@ -50,6 +50,30 @@ flowchart TB
 
 ADK is the agent framework; Gemini is the model accessed through Vertex AI. Application code retrieves the log and queries recent history before one model call. The model does not run SQL or write cloud resources. If history lookup fails, the investigation continues using the current log. Findings include severity, summary, a tentative cause and suggested next steps.
 
+## VPC network layer
+
+```mermaid
+flowchart TB
+  User[User browser] -->|public HTTPS| Dashboard[Cloud Run dashboard]
+  Agent[Private Cloud Run ADK agent]
+  Dashboard -->|Direct VPC egress| Subnet
+  Agent -->|Direct VPC egress| Subnet
+  subgraph VPC[log-analyzer-dev-vpc]
+    Subnet["Subnet: 10.42.0.0/24 · us-central1"]
+    Firewall["Egress firewall: allow API HTTPS"]
+    Access[Private Google Access]
+    DNS[Private Google API DNS]
+    Subnet --> Firewall --> Access
+    DNS -.->|resolves API names| Access
+  end
+  Access -->|private.googleapis.com| APIs[Google managed APIs]
+  APIs --> Services["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
+```
+
+Both Cloud Run services send all outbound traffic through `log-analyzer-dev-subnet`. Private DNS resolves Google API names to `199.36.153.8/30`; a route and firewall allow HTTPS to those addresses and deny other IPv4 egress for the app's network tag. No NAT or VPC connector is used.
+
+The dashboard keeps its public HTTPS entry point. Pub/Sub invokes the agent through its authenticated Cloud Run URL. The VPC controls outbound connectivity; service-account IAM controls data access. Storage, Firestore, BigQuery, Pub/Sub and Vertex AI remain managed services outside the subnet. This configuration does not create a VPC Service Controls perimeter.
+
 ## Two pipeline files
 
 | File | Automatic event | What happens |
@@ -77,6 +101,9 @@ They use Zein's `github-log-analyzer` repository connection. Work on a personal 
 | Firestore | `(default)`; `logs` and `investigations` |
 | Pub/Sub topic | `log-analyzer-dev-investigations` |
 | BigQuery table | `ai-log-analyzer-511017.log_analyzer_dev.incidents` |
+| VPC / subnet | `log-analyzer-dev-vpc` / `log-analyzer-dev-subnet` |
+| Subnet range / region | `10.42.0.0/24` / `us-central1` |
+| Private DNS zone | `log-analyzer-dev-googleapis` |
 
 The YAML `substitutions` configure these resource names, runtime accounts, model, labels and instance limit. Override them on the existing deployment trigger when needed. Attached service accounts authenticate through ADC; no JSON keys or GitHub GCP secrets are needed. Infrastructure and IAM are provisioned separately, not recreated by a release. Both services use Direct VPC egress through `log-analyzer-dev-vpc`, with private Google API access and restricted outbound traffic. IAM controls access to the managed storage and database services.
 

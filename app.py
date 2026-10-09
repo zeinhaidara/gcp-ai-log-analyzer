@@ -7,6 +7,7 @@ from pathlib import Path
 from storage import StorageUnavailable, create_store
 from analytics import incident_analytics
 from investigations import create_investigations, InvestigationUnavailable, InvestigationNotFound
+from replay import build_replay
 
 MAX_BODY = 1024 * 1024
 
@@ -25,13 +26,38 @@ def create_app(database=None, store=None, analytics=None, investigations=None):
     def application(environ, start_response):
         path = environ.get("PATH_INFO", "/")
         method = environ.get("REQUEST_METHOD", "GET")
-        if method == "GET" and path in ("/", "/app.js", "/style.css"):
-            name, mime = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8")}[path]
+        if method == "GET" and path in ("/", "/app.js", "/replay.js", "/style.css", "/favicon.svg"):
+            name, mime = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/replay.js": ("replay.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8"), "/favicon.svg": ("favicon.svg", "image/svg+xml")}[path]
             return respond(start_response, "200 OK", (Path(__file__).parent / "static" / name).read_text(encoding="utf-8"), mime)
         if method == "GET" and path == "/health":
             return respond(start_response, "200 OK", {"status": "ok"})
         if method == "GET" and path == "/analytics":
             return respond(start_response, "200 OK", analytics())
+        if method == "GET" and path.startswith("/replay/demo/"):
+            name = path.removeprefix("/replay/demo/")
+            if name not in ("retry-storm", "token-expiry", "payment-recovery"):
+                return respond(start_response, "404 Not Found", {"error": "Scenario not found."})
+            content = (Path(__file__).parent / "static" / "demos" / (name + ".txt")).read_text(encoding="utf-8")
+            return respond(start_response, "200 OK", {"filename": name + ".txt", "content": content, "demo": True, "replay": build_replay(content)})
+        if method == "GET" and path.startswith("/logs/") and path.endswith("/replay"):
+            log_id = path.removeprefix("/logs/").removesuffix("/replay")
+            try:
+                if str(uuid.UUID(log_id)) != log_id:
+                    raise ValueError()
+            except ValueError:
+                return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            try:
+                record = store.get(log_id)
+                if record is None:
+                    return respond(start_response, "404 Not Found", {"error": "Log not found."})
+            except StorageUnavailable:
+                return unavailable(start_response)
+            investigation = {}
+            try:
+                investigation = investigations.get(log_id) or {}
+            except (InvestigationUnavailable, InvestigationNotFound):
+                pass  # Replay remains available when cloud findings are unavailable.
+            return respond(start_response, "200 OK", {**record, "log_id": log_id, "investigation": investigation, "replay": build_replay(record["content"], investigation.get("findings"))})
         if path == "/logs" and method == "POST":
             try:
                 length = int(environ.get("CONTENT_LENGTH") or 0)
@@ -41,13 +67,13 @@ def create_app(database=None, store=None, analytics=None, investigations=None):
                 if not isinstance(data, dict):
                     raise ValueError()
                 filename, content = data.get("filename"), data.get("content")
-                if not isinstance(filename, str) or not filename.lower().endswith(".txt") or len(filename) > 255 or "/" in filename or "\\" in filename:
+                if not isinstance(filename, str) or not filename.lower().endswith((".txt", ".log", ".jsonl")) or len(filename) > 255 or "/" in filename or "\\" in filename:
                     raise ValueError()
                 if not isinstance(content, str) or not content.strip() or "\x00" in content:
                     raise ValueError()
                 content.encode("utf-8")
             except (ValueError, UnicodeError):
-                return respond(start_response, "400 Bad Request", {"error": "Provide a plain .txt filename and nonempty UTF-8 content."})
+                return respond(start_response, "400 Bad Request", {"error": "Provide a plain .txt, .log or .jsonl filename and nonempty UTF-8 content."})
             record = {"id": str(uuid.uuid4()), "filename": filename, "timestamp": datetime.now(timezone.utc).isoformat(), "status": "processed", "content": content, "error_count": sum("ERROR" in line.upper() for line in content.splitlines()), "warning_count": sum("WARN" in line.upper() for line in content.splitlines())}
             try:
                 store.save(record)

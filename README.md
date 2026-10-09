@@ -2,6 +2,40 @@
 
 A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then review the agent's Gemini findings.
 
+## Incident Time Machine
+
+Upload UTF-8 `.txt`, `.log` or `.jsonl` files, or open a saved log to reconstruct an incident, scrub its timeline, replay service signals,
+and jump to the first recorded fault or an explicit recovery. Filter by request/trace ID,
+select a service to inspect its event trail, and follow source references into the numbered
+original log. The Evidence panel supports guided timeline questions and keyword search;
+the separate AI findings panel shows Gemini's tentative explanations with validated source
+line references. Export a case as JSON for a reproducible investigation record.
+
+Three built-in synthetic scenarios demonstrate a retry storm, token expiry and payment
+recovery. Previewing a scenario neither saves an upload nor calls Gemini. Choose
+**Investigate this scenario** to save it through the normal upload/agent workflow.
+
+`GET /logs/{UUID}/replay` reads the saved file once, includes its original content and
+returns a bounded reconstruction plus available findings. It also works for old uploads
+and local SQLite storage; it adds no cloud resources or per-frame model calls.
+`GET /replay/demo/{retry-storm|token-expiry|payment-recovery}` reconstructs the demo files.
+
+The parser recognizes structured text, JSON Lines and Cloud Logging JSON, including
+timestamps, severity, service/logger fields, request IDs and explicit target/upstream fields.
+Connections represent recorded call relationships, not proof of successful calls. A shared
+trace ID alone does not create an edge. Map colors represent recorded signals, not live health.
+The first observed failure is not necessarily the root cause. AI hypotheses remain separate.
+
+When all events have compatible valid timestamps, replay uses chronological order while
+retaining original source line numbers. Missing/mixed clocks use source order without an
+invented duration. Time-only midnight rollovers are labeled assumptions. Reconstruction scans
+up to 12,000 lines, samples to 1,200 events and maps at most 20 services, with visible coverage
+notes. Full source remains accessible. AI still sees the first 24,000 source characters;
+numbering adds prompt formatting. Existing investigations need no migration.
+
+Playback: **Space** toggles play, **← / →** step through events when focus is outside controls.
+The layout supports mobile screens, keyboard controls and reduced-motion preferences.
+
 ## Deployment flow
 
 ```mermaid

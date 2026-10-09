@@ -1,32 +1,30 @@
-const message = document.querySelector('#message');
-const state = document.querySelector('#investigation-status');
-const retry = document.querySelector('#retry');
-let selectedId, selection = 0, timer;
+'use strict';
+const studio = new ReplayStudio();
+const $ = selector => document.querySelector(selector);
+let selectedId = null, selection = 0, timer = null, demoRecord = null;
+
 async function request(path, options) {
   const response = await fetch(path, options);
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Request failed');
+  if (!response.ok) throw new Error(data.error || 'Request failed.');
   return data;
 }
+function notify(text) { $('#message').textContent = text; $('#message').hidden = !text; }
 function renderInvestigation(result) {
-  const labels = {queued: 'Queued for investigation.', waiting: 'Waiting for the agent. You can retry if delivery stalled.', processing: 'Agent is investigating…', retrying: 'Agent encountered an error; Pub/Sub will retry delivery.', completed: 'Investigation completed. AI suggestions need your review.', disabled: 'AI investigation is available when connected to GCP.', enqueue_failed: result.error};
-  state.textContent = labels[result.status] || 'Investigation status unavailable.';
-  retry.hidden = !['waiting', 'retrying', 'enqueue_failed'].includes(result.status);
+  const labels = {preview:'This scenario is a local replay. Choose “Investigate this scenario” to save it and run the cloud agent.',queued:'Queued for the agent. Your replay is ready now.',waiting:'Waiting for the agent. Retry if delivery stalled.',not_requested:'Investigation has not been requested.',processing:'Gemini is investigating the saved log…',retrying:'The agent encountered an error. Pub/Sub will retry delivery.',completed:'Investigation completed. Review the hypotheses against the source.',disabled:'Replay is ready. AI investigations require the cloud deployment.',enqueue_failed:result.error,dispatch_failed:result.message || 'Upload saved. Retry this investigation.'};
+  $('#investigation-status').textContent = labels[result.status] || 'Investigation status is temporarily unavailable.';
+  $('#retry').hidden = !selectedId || !['waiting','not_requested','retrying','enqueue_failed','dispatch_failed'].includes(result.status);
   const findings = result.findings;
-  document.querySelector('#findings').hidden = !findings;
+  $('#findings').hidden = !findings;
   if (findings) {
-    document.querySelector('#severity').textContent = findings.severity;
-    document.querySelector('#summary').textContent = findings.summary;
-    document.querySelector('#cause').textContent = findings.likely_cause;
-    const list = document.querySelector('#recommendations');
-    list.replaceChildren();
-    for (const suggestion of findings.recommendations || []) {
-      const item = document.createElement('li');
-      item.textContent = suggestion;
-      list.append(item);
-    }
-    document.querySelector('#model').textContent = `${result.model || ''}${result.truncated ? ' · Only the first 24,000 characters were analyzed.' : ''}`;
-    document.querySelector('#history').textContent = `Historical incidents used: ${result.history_count || 0}`;
+    $('#severity').textContent = findings.severity; $('#severity').dataset.kind = findings.severity;
+    $('#summary').textContent = findings.summary; $('#cause').textContent = findings.likely_cause;
+    $('#recommendations').replaceChildren();
+    (findings.recommendations || []).forEach(text => $('#recommendations').append(element('li','',text)));
+    $('#model').textContent = `${result.model || 'Gemini'}${result.truncated ? ' · Only the first 24,000 source characters were supplied to the model.' : ''}`;
+    $('#history').textContent = result.history_available === false ? 'Historical lookup was unavailable; investigation used this log.' : `Historical incidents used: ${result.history_count || 0}`;
+    const hypotheses = studio.renderHypotheses(findings.hypotheses || []);
+    if (studio.data) studio.data.hypotheses = hypotheses;
   }
 }
 async function watch(logId, version, attempts = 0) {
@@ -35,90 +33,94 @@ async function watch(logId, version, attempts = 0) {
     if (version !== selection) return;
     renderInvestigation(result);
     if (result.status === 'completed') refreshAnalytics();
-    if (!['completed', 'disabled'].includes(result.status) && attempts < 60) {
-      timer = setTimeout(() => watch(logId, version, attempts + 1), 3000);
-    } else if (attempts === 60 && result.status !== 'completed') {
-      state.textContent += ' Live updates paused; select this log again to check progress.';
-    }
-  } catch (error) {
-    if (version === selection) state.textContent = error.message + ' Select this log again to check progress.';
-  }
+    if (!['completed','disabled'].includes(result.status) && attempts < 60) timer = setTimeout(() => watch(logId,version,attempts+1),3000);
+    else if (attempts === 60) $('#investigation-status').textContent += ' Live updates paused; select this case again to check progress.';
+  } catch(error) { if(version === selection) $('#investigation-status').textContent = `${error.message} Replay remains available. Select the case again to check AI progress.`; }
 }
+function markSelected() { document.querySelectorAll('.case-button').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.logId === selectedId))); }
 async function selectLog(log) {
-  const version = ++selection;
-  selectedId = log.id;
-  clearTimeout(timer);
+  const version = ++selection; clearTimeout(timer); studio.pause(); notify('Opening case…');
+  selectedId = log.id; demoRecord = null; markSelected();
   try {
-    const detail = log.content === undefined ? await request(`/logs/${log.id}`) : log;
-    if (version !== selection) return;
-    document.querySelector('#filename').textContent = detail.filename;
-    document.querySelector('#content').textContent = detail.content;
-    document.querySelector('#detail').hidden = false;
-    renderInvestigation(detail.investigation || {status: 'waiting'});
-    await watch(log.id, version);
-  } catch (error) { if (version === selection) message.textContent = error.message; }
+    const artifact = await request(`/logs/${log.id}/replay`);
+    if(version !== selection) return;
+    studio.load({...log,...artifact},artifact.replay); renderInvestigation(artifact.investigation || log.investigation || {status:'waiting'}); notify('');
+    await watch(log.id,version);
+  } catch(error) { if(version === selection) notify(error.message); }
+}
+async function loadDemo(name) {
+  const version = ++selection; clearTimeout(timer); studio.pause(); notify('Reconstructing the scenario…');
+  selectedId = null; markSelected();
+  try {
+    const record = await request(`/replay/demo/${encodeURIComponent(name)}`);
+    if(version !== selection) return;
+    demoRecord = record; studio.load(record,record.replay); renderInvestigation({status:'preview'}); notify('');
+  } catch(error) { if(version === selection) notify(error.message); }
 }
 async function refresh() {
-  const logs = await request('/logs');
-  const list = document.querySelector('#logs');
-  list.replaceChildren();
-  if (!logs.length) list.textContent = 'No logs yet. Upload your first file.';
-  for (const log of logs) {
-    const button = document.createElement('button');
-    button.className = 'log';
-    button.textContent = `${log.filename} | ${new Date(log.timestamp).toLocaleString()} | ${log.error_count} errors | ${log.warning_count} warnings`;
-    button.onclick = () => selectLog(log);
-    list.append(button);
+  const logs = await request('/logs'); $('#case-count').textContent = logs.length;
+  const list = $('#logs'); list.replaceChildren();
+  if(!logs.length) list.append(element('p','fine-print','No saved cases yet. Open a log or try a scenario below.'));
+  for(const log of logs) {
+    const button = element('button','case-button'); button.type='button';button.dataset.logId=log.id;
+    const name=element('span','case-name',log.filename);name.title=log.filename;
+    const date=new Date(log.timestamp).toLocaleDateString(undefined,{month:'short',day:'numeric'});
+    button.append(name,element('small','',`${date} · ${log.error_count} errors · ${log.warning_count} warnings`));
+    button.onclick=()=>selectLog(log);list.append(button);
   }
+  markSelected();
 }
-retry.onclick = async () => {
-  const logId = selectedId, version = selection;
-  retry.disabled = true;
-  clearTimeout(timer);
+async function saveContent(filename,content) {
+  const log = await request('/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename,content})});
+  // The durable case ID is retained even when a later refresh fails.
+  await selectLog(log);
+  if(log.investigation.status === 'enqueue_failed' || log.investigation.status === 'dispatch_failed') notify(log.investigation.error || log.investigation.message);
+  try { await refresh(); } catch { notify('Case saved. The case list could not refresh; select Refresh to try again.'); }
+  return log;
+}
+const dialog=$('#upload-dialog');
+['#open-upload','#welcome-upload'].forEach(selector=>$(selector).onclick=()=>{ $('#upload-error').hidden=true;dialog.showModal(); });
+$('#close-upload').onclick=()=>dialog.close();
+$('#upload').onsubmit=async event=>{
+  event.preventDefault();const button=event.target.querySelector('[type="submit"]');button.disabled=true;
   try {
-    const result = await request(`/investigations/${logId}`, {method: 'POST'});
-    if (version !== selection) return;
-    renderInvestigation(result);
-    await watch(logId, version);
-  } catch (error) { if (version === selection) state.textContent = error.message; }
-  finally { retry.disabled = false; }
+    const file=$('#file').files[0];
+    if(!file || !/\.(txt|log|jsonl)$/i.test(file.name) || file.size>900*1024)throw new Error('Choose a UTF-8 .txt, .log or .jsonl file under 900 KiB.');
+    const content=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());
+    const log=await request('/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:file.name,content})});
+    dialog.close();await selectLog(log);try{await refresh();}catch{notify('Case saved. The case list could not refresh.');}
+  } catch(error) { $('#upload-error').textContent=error.message;$('#upload-error').hidden=false; }
+  finally { button.disabled=false; }
 };
-document.querySelector('#upload').onsubmit = async event => {
-  event.preventDefault();
-  const button = event.target.querySelector('button');
-  button.disabled = true;
-  try {
-    const file = document.querySelector('#file').files[0];
-    if (!file || file.size > 900 * 1024) throw new Error('Choose a .txt file under 900 KiB.');
-    const content = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
-    const log = await request('/logs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({filename: file.name, content})});
-    message.textContent = log.investigation.error || 'Log saved.';
-    // Show the saved ID immediately, even if list refresh later fails.
-    await selectLog(log);
-    await refresh();
-  } catch (error) { message.textContent = error.message; }
-  finally { button.disabled = false; }
+$('#save-demo').onclick=async()=>{
+  if(!demoRecord)return;const record=demoRecord;const button=$('#save-demo');button.disabled=true;
+  try { await saveContent(record.filename,record.content); } catch(error) { notify(error.message); } finally { button.disabled=false; }
 };
-refresh().catch(error => { message.textContent = error.message; });
+$('#retry').onclick=async()=>{
+  const logId=selectedId,version=selection;if(!logId)return;$('#retry').disabled=true;clearTimeout(timer);
+  try {const result=await request(`/investigations/${logId}`,{method:'POST'});if(version!==selection)return;renderInvestigation(result);await watch(logId,version);}
+  catch(error){if(version===selection)$('#investigation-status').textContent=error.message;}
+  finally{$('#retry').disabled=false;}
+};
+document.querySelectorAll('[data-demo]').forEach(button=>button.onclick=()=>loadDemo(button.dataset.demo));
+$('#refresh-logs').onclick=()=>refresh().catch(error=>notify(error.message));
+
 async function refreshAnalytics() {
-  const target = document.querySelector('#analytics');
+  const target=$('#analytics');
   try {
-    const report = await request('/analytics');
-    target.replaceChildren();
-    if (!report.enabled) { target.textContent = report.message; return; }
-    const total = document.createElement('p');
-    total.textContent = `${report.total} completed investigations in the last ${report.days} days`;
-    target.append(total);
-    for (const [title, values] of [['Severity', report.severity], ['Daily incidents', report.daily], ['Failure categories', report.categories], ['Services', report.services]]) {
-      const heading = document.createElement('h3'); heading.textContent = title;
-      const list = document.createElement('ul');
-      for (const [name, count] of Object.entries(values)) {
-        const item = document.createElement('li'); item.textContent = `${name}: ${count}`; list.append(item);
-      }
-      if (!list.children.length) { const item = document.createElement('li'); item.textContent = 'No investigations yet'; list.append(item); }
-      target.append(heading, list);
+    const report=await request('/analytics');target.replaceChildren();
+    if(!report.enabled){target.append(element('p','',report.message));return;}
+    const total=element('p','report-total',String(report.total));total.append(element('span','',` completed investigations · last ${report.days} days`));target.append(total);
+    const grid=element('div','report-grid');
+    for(const [title,values] of [['Severity',report.severity],['Daily incidents',report.daily],['Failure categories',report.categories],['Services',report.services]]) {
+      const group=element('div','report-group');group.append(element('h3','',title));const max=Math.max(1,...Object.values(values));
+      for(const [name,count]of Object.entries(values)) {const item=element('div','report-item');item.append(element('span','',name),element('strong','',String(count)));const bar=element('div','report-bar'),fill=element('div','report-bar-fill');fill.style.width=`${count/max*100}%`;bar.append(fill);group.append(item,bar);}
+      if(!Object.keys(values).length)group.append(element('p','fine-print','No completed investigations.'));grid.append(group);
     }
-  } catch { target.textContent = 'Incident reporting is temporarily unavailable.'; }
+    target.append(grid);
+  } catch { target.textContent='Incident reporting is temporarily unavailable.'; }
 }
-document.querySelector('#refresh-analytics').onclick = refreshAnalytics;
-refreshAnalytics();
+$('#refresh-analytics').onclick=refreshAnalytics;
+refresh().catch(error=>notify(error.message));refreshAnalytics();
+const initialDemo = new URLSearchParams(location.hash.slice(1)).get('demo');
+if (['retry-storm','token-expiry','payment-recovery'].includes(initialDemo)) loadDemo(initialDemo);

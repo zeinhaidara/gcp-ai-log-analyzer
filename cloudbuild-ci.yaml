@@ -2,6 +2,10 @@
 # The event/branch/name is configured in Cloud Build > Triggers.
 # Steps execute in order; any failure stops the build. Nothing is published.
 steps:
+- id: check-interface
+  name: node:22-alpine
+  entrypoint: sh
+  args: [-ec, 'node --check static/app.js && node --check static/replay.js']
 - id: test-dashboard
   name: python:3.12-slim
   entrypoint: sh
@@ -10,7 +14,7 @@ steps:
   - |
     pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
     python -m unittest discover -s tests -v
-    bandit -q app.py storage.py analytics.py investigations.py
+    bandit -q app.py storage.py analytics.py investigations.py replay.py
     pip-audit -r requirements.txt --progress-spinner off
 - id: test-agent
   name: python:3.12-slim

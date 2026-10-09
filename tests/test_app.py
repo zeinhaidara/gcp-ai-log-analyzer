@@ -27,6 +27,36 @@ class AppTests(unittest.TestCase):
     def test_health(self):
         self.assertEqual(self.request("/health"), ("200 OK", {"status": "ok"}))
 
+    def test_replay_is_available_for_existing_saved_upload_without_cloud_ai(self):
+        _, log = self.request("/logs", "POST", {"filename": "a.txt", "content": "12:00:00 INFO service=api target=db trace=r1 query\n12:00:01 ERROR service=db trace=r1 timeout"})
+        self.app = create_app(self.database)
+        status, result = self.request("/logs/" + log["id"] + "/replay")
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(result["replay"]["first_fault"], "L2")
+        self.assertEqual(result["replay"]["links"][0]["target"], "db")
+
+    def test_plain_log_and_jsonl_uploads_are_supported(self):
+        for filename in ("events.log", "events.jsonl"):
+            with self.subTest(filename=filename):
+                self.assertEqual(self.request("/logs", "POST", {"filename": filename, "content": '{"service":"api","level":"ERROR","message":"timeout"}'})[0], "201 Created")
+
+    def test_demo_preview_does_not_save_or_enqueue_and_paths_are_allowlisted(self):
+        store = Mock()
+        self.app = create_app(store=store)
+        self.assertEqual(self.request("/replay/demo/retry-storm")[0], "200 OK")
+        self.assertEqual(self.request("/replay/demo/../../app.py")[0], "404 Not Found")
+        store.save.assert_not_called()
+        store.enqueue.assert_not_called()
+
+    def test_replay_survives_findings_failure_and_rejects_invalid_id(self):
+        store, control = Mock(), Mock()
+        store.get.return_value = {"filename": "test.txt", "content": "ERROR timeout"}
+        control.get.side_effect = InvestigationUnavailable("secret")
+        self.app = create_app(store=store, investigations=control)
+        self.assertEqual(self.request("/logs/../../secret/replay")[0], "404 Not Found")
+        store.get.assert_not_called()
+        self.assertEqual(self.request("/logs/00000000-0000-4000-8000-000000000001/replay")[0], "200 OK")
+
     def test_analytics_returns_aggregate_report(self):
         report = {"enabled": True, "total": 2, "severity": {"error": 2}}
         source = Mock(return_value=report)

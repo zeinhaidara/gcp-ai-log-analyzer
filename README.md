@@ -2,21 +2,77 @@
 
 A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then review the agent's Gemini findings.
 
+## Deployment flow
+
 ```mermaid
 flowchart LR
-  GitHub -->|automatic trigger| Build[Cloud Build]
-  Build --> Registry[Artifact Registry]
-  Registry --> Dashboard[Cloud Run dashboard]
-  Registry --> Agent[Cloud Run ADK agent]
-  Dashboard --> Storage[Private Cloud Storage]
-  Dashboard --> DB[Firestore]
-  Dashboard --> Topic[Pub/Sub authenticated push]
-  Topic --> Agent
-  Storage --> Agent
-  Agent --> Gemini[Vertex AI Gemini]
-  Agent --> DB
-  Agent --> BQ[BigQuery incidents]
+  GitHub[GitHub dev branch] --> Build[Cloud Build]
+  Build --> Checks[Tests and security scans]
+  Checks --> Registry[Artifact Registry]
+  Checks -->|deploy agent then dashboard| Run[Cloud Run services]
+  Registry -->|scanned images| Run
 ```
+
+Artifact Registry stores the two container images. Cloud Run runs the dashboard and the private ADK processing service. A merge into `dev` triggers deployment; promotion into `main` does not create a separate production deployment.
+
+## Application data flow
+
+```mermaid
+flowchart TB
+  User[User uploads txt log] --> Dashboard[Cloud Run dashboard and API]
+  Dashboard -->|raw file| Storage[Cloud Storage]
+  Dashboard -->|metadata and counts| Logs[Firestore logs]
+  Dashboard -->|saved log ID| Topic[Pub/Sub]
+  Topic -->|authenticated push| Agent[Private Cloud Run ADK agent]
+  Storage -->|retrieve raw file| Agent
+  Agent -->|status and AI findings| Findings[Firestore investigations]
+  Findings -->|API polling| Dashboard
+  Agent -->|incident summary| BQ[BigQuery incidents]
+  BQ -->|seven-day reporting| Dashboard
+  Dashboard -->|findings and reports| User
+```
+
+The dashboard saves the file and metadata before queuing its ID. **Cloud Storage** holds the actual log; **Firestore** holds metadata, investigation status and detailed findings. **BigQuery** holds incident summaries for reports and historical context. Reports count completed investigations and refresh at most once per minute.
+
+## AI investigation flow
+
+```mermaid
+flowchart TB
+  Request[Pub/Sub log ID] --> Agent[ADK agent on Cloud Run]
+  Storage[Cloud Storage raw log] -->|current log| Agent
+  BQ[BigQuery past incidents] -->|up to five recent matches| Agent
+  Agent -->|log and historical context| Gemini[Gemini on Vertex AI]
+  Gemini -->|structured findings| Agent
+  Agent -->|detailed findings| Firestore[Firestore investigations]
+  Agent -->|new incident summary| BQ
+  Firestore -->|dashboard API| User[User reviews suggestions]
+```
+
+ADK is the agent framework; Gemini is the model accessed through Vertex AI. Application code retrieves the log and queries recent history before one model call. The model does not run SQL or write cloud resources. If history lookup fails, the investigation continues using the current log. Findings include severity, summary, a tentative cause and suggested next steps.
+
+## VPC network layer
+
+```mermaid
+flowchart TB
+  User[User browser] -->|public HTTPS| Dashboard[Cloud Run dashboard]
+  Agent[Private Cloud Run ADK agent]
+  Dashboard -->|Direct VPC egress| Subnet
+  Agent -->|Direct VPC egress| Subnet
+  subgraph VPC[log-analyzer-dev-vpc]
+    Subnet["Subnet: 10.42.0.0/24 · us-central1"]
+    Firewall["Egress firewall: allow API HTTPS"]
+    Access[Private Google Access]
+    DNS[Private Google API DNS]
+    Subnet --> Firewall --> Access
+    DNS -.->|resolves API names| Access
+  end
+  Access -->|private.googleapis.com| APIs[Google managed APIs]
+  APIs --> Services["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
+```
+
+Both Cloud Run services send all outbound traffic through `log-analyzer-dev-subnet`. Private DNS resolves Google API names to `199.36.153.8/30`; a route and firewall allow HTTPS to those addresses and deny other IPv4 egress for the app's network tag. No NAT or VPC connector is used.
+
+The dashboard keeps its public HTTPS entry point. Pub/Sub invokes the agent through its authenticated Cloud Run URL. The VPC controls outbound connectivity; service-account IAM controls data access. Storage, Firestore, BigQuery, Pub/Sub and Vertex AI remain managed services outside the subnet. This configuration does not create a VPC Service Controls perimeter.
 
 ## Two pipeline files
 
@@ -45,10 +101,13 @@ They use Zein's `github-log-analyzer` repository connection. Work on a personal 
 | Firestore | `(default)`; `logs` and `investigations` |
 | Pub/Sub topic | `log-analyzer-dev-investigations` |
 | BigQuery table | `ai-log-analyzer-511017.log_analyzer_dev.incidents` |
+| VPC / subnet | `log-analyzer-dev-vpc` / `log-analyzer-dev-subnet` |
+| Subnet range / region | `10.42.0.0/24` / `us-central1` |
+| Private DNS zone | `log-analyzer-dev-googleapis` |
 
-The YAML `substitutions` configure these resource names, runtime accounts, model, labels and instance limit. Override them on the existing deployment trigger when needed. Attached service accounts authenticate through ADC; no JSON keys or GitHub GCP secrets are needed. Infrastructure and IAM are provisioned separately, not recreated by a release. No custom VPC is needed for this managed-service flow.
+The YAML `substitutions` configure these resource names, runtime accounts, model, labels and instance limit. Override them on the existing deployment trigger when needed. Attached service accounts authenticate through ADC; no JSON keys or GitHub GCP secrets are needed. Infrastructure and IAM are provisioned separately, not recreated by a release. Both services use Direct VPC egress through `log-analyzer-dev-vpc`, with private Google API access and restricted outbound traffic. IAM controls access to the managed storage and database services.
 
-Both services keep IAM authentication, minimum zero and maximum one instance. The agent also uses concurrency one and a 180-second request deadline. Labels identify the app, development environment, owner and Cloud Build management. Model calls and cloud usage can incur charges; instance limits are not a spending cap.
+The dashboard is public; the agent requires IAM authentication. Both services use minimum zero and maximum one instance. The agent also uses concurrency one and a 180-second request deadline. Labels identify the app, development environment, owner and Cloud Build management. Model calls and cloud usage can incur charges; instance limits are not a spending cap.
 
 ## App integration
 
@@ -56,17 +115,11 @@ Both services keep IAM authentication, minimum zero and maximum one instance. Th
 
 The agent receives authenticated push at `/pubsub`, reads the raw log, calls Gemini, saves findings to Firestore and loads an incident into BigQuery. `GET /investigations/UUID` exposes status and findings; the dashboard polls while the selected log is running. `POST /investigations/UUID` retries delivery using the saved log ID. Completed or currently processing investigations are not republished through this endpoint. An ambiguous publish can deliver twice; the agent's existing lease/completion checks handle duplicate delivery.
 
-If publication fails, the upload still returns its saved ID with `investigation.status=enqueue_failed`. Retry the investigation, not the upload. Initial status is `waiting` until the agent creates its investigation document. Automatic Pub/Sub retries/DLQ remain configured by infrastructure. Findings are AI suggestions requiring review. Use synthetic logs without credentials.
+If publication fails, the upload still returns its saved ID with `investigation.status=enqueue_failed`. Retry the investigation, not the upload. Successful publishing records `queued`; the agent then records processing and completion status. Older uploads without dispatch metadata show `waiting`. Automatic Pub/Sub retries/DLQ remain configured by infrastructure. Findings are AI suggestions requiring review. Use synthetic logs without credentials.
 
 ## Open the app
 
-The dashboard is hosted at [its Cloud Run URL](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app). IAM currently requires authenticated requests; an ordinary browser without a token returns 403. For authorized testing:
-
-```powershell
-gcloud run services proxy log-analyzer-dev --project=ai-log-analyzer-511017 --region=us-central1 --port=8080
-```
-
-Open `http://localhost:8080`. This proxy forwards requests to the hosted service. Browser sign-in or public access requires a separate access setting.
+Open the public [Incident Desk dashboard](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app). Upload a synthetic log, then review its progress and AI findings. The separate agent URL remains authenticated and returns 403 to anonymous requests.
 
 ## Run locally
 

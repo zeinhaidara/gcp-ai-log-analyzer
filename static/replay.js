@@ -47,7 +47,7 @@ class ReplayStudio {
     this.$('#question-form').onsubmit = event => { event.preventDefault(); this.ask(this.$('#question').value); };
     ['evidence', 'investigation'].forEach(name => this.$(`#${name}-tab`).onclick = () => this.tab(name));
     document.addEventListener('keydown', event => {
-      if (!this.data || this.$('#upload-dialog').open || event.altKey || event.ctrlKey || event.metaKey || /INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY|A/.test(event.target.tagName)) return;
+      if (!this.data || this.$('#studio').hidden || this.$('#upload-dialog').open || event.altKey || event.ctrlKey || event.metaKey || /INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY|A/.test(event.target.tagName)) return;
       if (event.code === 'Space') { event.preventDefault(); this.playing ? this.pause() : this.play(); }
       if (event.key === 'ArrowRight') { event.preventDefault(); this.seek(this.position + 1); }
       if (event.key === 'ArrowLeft') { event.preventDefault(); this.seek(this.position - 1); }
@@ -60,9 +60,10 @@ class ReplayStudio {
     this.lines = record.content.split(/\r\n|\n|\r/);
     this.$('#welcome').hidden = true; this.$('#studio').hidden = false;
     this.$('#filename').textContent = record.filename;
-    this.$('#source-badge').textContent = record.demo ? 'Synthetic scenario · unsaved' : 'Saved log';
+    this.$('#source-badge').textContent = record.demo ? 'Demo log · synthetic example' : 'Saved log';
     this.$('#save-demo').hidden = !record.demo;
     this.$('#raw-source').open = false; this.$('#content').replaceChildren();
+    this.$('#event-trail').open = false; this.$('.ask-panel').open = false;
     this.$('#source-line-count').textContent = `${data.coverage.total_lines.toLocaleString()} lines`;
     this.$('#answer').hidden = true; this.$('#question').value = '';
     const traceSelect = this.$('#trace-filter'); traceSelect.replaceChildren();
@@ -156,7 +157,7 @@ class ReplayStudio {
       const top = element('span', 'node-top'), symbol = element('span', 'node-symbol', node.id === 'unattributed' ? '?' : '◈'); symbol.setAttribute('aria-hidden', 'true');
       const name = element('span', 'node-name', node.id.length > 26 ? node.id.slice(0, 24) + '…' : node.id); name.title = node.id;
       top.append(symbol, name); button.append(top, element('span', 'node-state'), element('span', 'node-foot'));
-      button.onclick = () => { this.service = this.service === node.id ? '' : node.id; this.renderMap(); this.renderTrail(); };
+      button.onclick = () => { this.service = this.service === node.id ? '' : node.id; this.$('#event-trail').open = !!this.service; this.renderMap(); this.renderTrail(); };
       this.$('#map-nodes').append(button); this.nodeElements.set(node.id, button);
       if (focused === node.id) button.focus({preventScroll: true});
     });

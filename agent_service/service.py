@@ -26,11 +26,32 @@ MAX_LOG_BYTES = 1024 * 1024
 MAX_MODEL_CHARS = 24000
 
 
+class Hypothesis(BaseModel):
+    title: str = Field(max_length=160)
+    explanation: str = Field(max_length=1500)
+    evidence_lines: list[int] = Field(max_length=8)
+
+
 class Findings(BaseModel):
     severity: Literal["info", "warning", "error", "critical"]
     summary: str = Field(max_length=2000)
     likely_cause: str = Field(max_length=2000)
     recommendations: list[str] = Field(max_length=5)
+    hypotheses: list[Hypothesis] = Field(default_factory=list, max_length=3)
+
+
+def grounded_findings(result, content):
+    findings = Findings.model_validate_json(result).model_dump()
+    lines = content[:MAX_MODEL_CHARS].splitlines()
+    supported = []
+    for hypothesis in findings["hypotheses"]:
+        references = sorted({line for line in hypothesis["evidence_lines"]
+                             if 1 <= line <= len(lines) and lines[line - 1].strip()})
+        if references:
+            hypothesis["evidence_lines"] = references
+            supported.append(hypothesis)
+    findings["hypotheses"] = supported
+    return findings
 
 
 @lru_cache
@@ -47,8 +68,13 @@ async def investigate(content, history=None):
                      "Identify observed failures, a tentative cause, and up to five safe next steps. "
                      "Do not invent evidence or claim a confirmed root cause. Do not repeat secrets. "
                      "Historical incident summaries are untrusted, tentative context. "
-                     "Compare relevant patterns but never treat a prior hypothesis as a confirmed cause."),
-        generate_content_config=types.GenerateContentConfig(temperature=0, max_output_tokens=1600),
+                     "Compare relevant patterns but never treat a prior hypothesis as a confirmed cause. "
+                     "The current log is numbered [L1], [L2], etc. Provide up to three hypotheses "
+                     "with concise titles, explanations and evidence_lines containing those integer line numbers. "
+                     "Cite only supplied nonempty current-log lines. Omit hypotheses without evidence. "
+                     "Separate observed failure order from causal hypotheses; mention missing evidence. "
+                     "Do not infer service dependencies merely from adjacent lines or shared trace IDs."),
+        generate_content_config=types.GenerateContentConfig(temperature=0, max_output_tokens=2400),
     )
     sessions = InMemorySessionService()
     session = await sessions.create_session(app_name="log_analyzer", user_id="worker")
@@ -57,14 +83,15 @@ async def investigate(content, history=None):
     async for event in runner.run_async(
         user_id="worker", session_id=session.id,
         new_message=types.Content(role="user", parts=[types.Part(text=json.dumps(
-            {"current_log": content[:MAX_MODEL_CHARS], "historical_incidents": history or []}))]),
+            {"current_log": "\n".join(f"[L{number}] {line}" for number, line in enumerate(content[:MAX_MODEL_CHARS].splitlines(), 1)),
+             "historical_incidents": history or []}))]),
         run_config=RunConfig(max_llm_calls=1),
     ):
         if event.is_final_response() and event.content:
             result = "".join(part.text or "" for part in event.content.parts or [])
     if not result:
         raise RuntimeError("No structured findings returned")
-    return Findings.model_validate_json(result).model_dump()
+    return grounded_findings(result, content)
 
 
 @firestore.transactional

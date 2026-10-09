@@ -14,6 +14,38 @@ def message(data):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_model_receives_numbered_bounded_source_in_one_call(self):
+        import asyncio
+        from types import SimpleNamespace
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": [], "hypotheses": [{"title": "Candidate", "explanation": "Tentative", "evidence_lines": [1]}]}
+        runner = Mock()
+        captured = {}
+        async def events(**kwargs):
+            captured.update(kwargs)
+            yield SimpleNamespace(is_final_response=lambda: True, content=SimpleNamespace(parts=[SimpleNamespace(text=json.dumps(findings))]))
+        runner.run_async = events
+        sessions = Mock()
+        sessions.create_session = AsyncMock(return_value=SimpleNamespace(id="test-session"))
+        with patch.object(service, "LlmAgent"), patch.object(service, "Runner", return_value=runner), patch.object(service, "InMemorySessionService", return_value=sessions):
+            result = asyncio.run(service.investigate("ERROR " + "x" * service.MAX_MODEL_CHARS + "\nUNSEEN_TAIL", []))
+        payload = json.loads(captured["new_message"].parts[0].text)
+        self.assertTrue(payload["current_log"].startswith("[L1] ERROR"))
+        self.assertNotIn("UNSEEN_TAIL", payload["current_log"])
+        self.assertEqual(captured["run_config"].max_llm_calls, 1)
+        self.assertEqual(result["hypotheses"][0]["evidence_lines"], [1])
+
+    def test_hypothesis_citations_are_bounded_to_supplied_nonempty_log_lines(self):
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": [], "hypotheses": [{"title": "Pool", "explanation": "Candidate", "evidence_lines": [1, 2, 3, 999]}, {"title": "Unsupported", "explanation": "Candidate", "evidence_lines": [999]}]}
+        result = service.grounded_findings(json.dumps(findings), "INFO started\n\nERROR timeout")
+        self.assertEqual(len(result["hypotheses"]), 1)
+        self.assertEqual(result["hypotheses"][0]["evidence_lines"], [1, 3])
+
+    def test_legacy_findings_remain_valid_and_citations_cannot_reach_unseen_tail(self):
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": []}
+        self.assertEqual(service.grounded_findings(json.dumps(findings), "ERROR timeout")["hypotheses"], [])
+        findings["hypotheses"] = [{"title": "Tail", "explanation": "Not supplied", "evidence_lines": [2]}]
+        self.assertEqual(service.grounded_findings(json.dumps(findings), "x" * service.MAX_MODEL_CHARS + "\nERROR tail")["hypotheses"], [])
+
     def test_classification(self):
         self.assertEqual(service.classify_log("INFO orders started\nERROR database timed out"), ("orders", "database_timeout"))
         self.assertEqual(service.classify_log("ERROR expired_token 401"), ("unknown", "authentication"))

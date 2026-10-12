@@ -1,5 +1,5 @@
 # GCP AI Log Analyzer
-
+https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app/
 A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then review the agent's Gemini findings.
 
 ## Deployment flow

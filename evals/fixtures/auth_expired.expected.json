@@ -1,0 +1,4 @@
+{
+  "severity_at_least": "warning",
+  "must_mention_any": ["token", "expired", "401", "authentication", "auth"]
+}

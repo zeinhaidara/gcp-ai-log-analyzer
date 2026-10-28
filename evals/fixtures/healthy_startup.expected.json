@@ -1,0 +1,5 @@
+{
+  "severity_at_least": "info",
+  "severity_at_most": "warning",
+  "must_mention_any": ["ready", "started", "healthy", "normal", "no error"]
+}

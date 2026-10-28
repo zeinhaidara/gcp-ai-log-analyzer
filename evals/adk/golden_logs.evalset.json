@@ -1,0 +1,160 @@
+{
+  "eval_set_id": "golden_logs",
+  "name": "Golden logs",
+  "description": "Synthetic logs with known diagnoses.",
+  "eval_cases": [
+    {
+      "eval_id": "auth_expired",
+      "conversation": [
+        {
+          "invocation_id": "auth_expired-1",
+          "user_content": {
+            "parts": [
+              {
+                "text": "{\"current_log\": \"[L1] 2026-10-27T11:00:00Z INFO accounts started version=2.0.1\\n[L2] 2026-10-27T11:00:04Z INFO accounts request_id=req-2001 GET /profile status=200 user=u-100\\n[L3] 2026-10-27T11:05:10Z WARN accounts request_id=req-2002 token nearing expiry user=u-101\\n[L4] 2026-10-27T11:05:31Z WARN accounts request_id=req-2003 authentication failed reason=expired_token user=u-101\\n[L5] 2026-10-27T11:05:31Z WARN accounts request_id=req-2003 GET /profile status=401\\n[L6] 2026-10-27T11:05:40Z WARN accounts request_id=req-2004 authentication failed reason=expired_token user=u-102\\n[L7] 2026-10-27T11:05:40Z WARN accounts request_id=req-2004 GET /settings status=401\\n[L8] 2026-10-27T11:06:02Z INFO accounts request_id=req-2005 token refreshed user=u-101\\n[L9] 2026-10-27T11:06:03Z INFO accounts request_id=req-2005 GET /profile status=200 user=u-101\", \"historical_incidents\": []}"
+              }
+            ],
+            "role": "user"
+          },
+          "creation_timestamp": 0.0
+        }
+      ],
+      "session_input": {
+        "app_name": "log_investigator",
+        "user_id": "eval",
+        "state": {}
+      },
+      "creation_timestamp": 0.0,
+      "rubrics": [
+        {
+          "rubric_id": "auth_expired-1",
+          "rubric_content": {
+            "text_property": "Identifies expired tokens causing HTTP 401 authentication failures."
+          }
+        },
+        {
+          "rubric_id": "auth_expired-2",
+          "rubric_content": {
+            "text_property": "Presents the cause as tentative rather than a confirmed root cause."
+          }
+        }
+      ],
+      "final_session_state": {}
+    },
+    {
+      "eval_id": "db_timeout",
+      "conversation": [
+        {
+          "invocation_id": "db_timeout-1",
+          "user_content": {
+            "parts": [
+              {
+                "text": "{\"current_log\": \"[L1] 2026-10-27T10:00:00Z INFO orders started version=1.4.2\\n[L2] 2026-10-27T10:00:05Z INFO orders request_id=req-1001 GET /orders/42 status=200 latency_ms=38\\n[L3] 2026-10-27T10:01:12Z WARN orders request_id=req-1002 database connection pool near capacity active=19 max=20\\n[L4] 2026-10-27T10:01:30Z WARN orders request_id=req-1003 database query slow latency_ms=4800\\n[L5] 2026-10-27T10:01:42Z ERROR orders request_id=req-1004 database connection timed out after 5000ms pool_exhausted=true\\n[L6] 2026-10-27T10:01:42Z ERROR orders request_id=req-1004 POST /orders status=500 error=\\\"database timeout\\\"\\n[L7] 2026-10-27T10:01:48Z ERROR orders request_id=req-1005 database connection timed out after 5000ms pool_exhausted=true\\n[L8] 2026-10-27T10:01:48Z ERROR orders request_id=req-1005 POST /orders status=500 error=\\\"database timeout\\\"\\n[L9] 2026-10-27T10:02:10Z WARN orders request_id=req-1006 retrying database connection attempt=2\\n[L10] 2026-10-27T10:02:15Z ERROR orders request_id=req-1006 database connection timed out after 5000ms\", \"historical_incidents\": []}"
+              }
+            ],
+            "role": "user"
+          },
+          "creation_timestamp": 0.0
+        }
+      ],
+      "session_input": {
+        "app_name": "log_investigator",
+        "user_id": "eval",
+        "state": {}
+      },
+      "creation_timestamp": 0.0,
+      "rubrics": [
+        {
+          "rubric_id": "db_timeout-1",
+          "rubric_content": {
+            "text_property": "Identifies database connection timeouts or pool exhaustion as the observed failure."
+          }
+        },
+        {
+          "rubric_id": "db_timeout-2",
+          "rubric_content": {
+            "text_property": "Presents the cause as tentative rather than a confirmed root cause."
+          }
+        }
+      ],
+      "final_session_state": {}
+    },
+    {
+      "eval_id": "healthy_startup",
+      "conversation": [
+        {
+          "invocation_id": "healthy_startup-1",
+          "user_content": {
+            "parts": [
+              {
+                "text": "{\"current_log\": \"[L1] 2026-10-27T09:00:00Z INFO catalog started version=1.0.0\\n[L2] 2026-10-27T09:00:01Z INFO catalog loading configuration source=defaults\\n[L3] 2026-10-27T09:00:02Z INFO catalog connected to datastore latency_ms=12\\n[L4] 2026-10-27T09:00:03Z INFO catalog cache warmed entries=1500\\n[L5] 2026-10-27T09:00:04Z INFO catalog health check status=healthy\\n[L6] 2026-10-27T09:00:05Z INFO catalog ready to serve traffic port=8080\\n[L7] 2026-10-27T09:00:30Z INFO catalog request_id=req-4001 GET /items status=200 latency_ms=21\", \"historical_incidents\": []}"
+              }
+            ],
+            "role": "user"
+          },
+          "creation_timestamp": 0.0
+        }
+      ],
+      "session_input": {
+        "app_name": "log_investigator",
+        "user_id": "eval",
+        "state": {}
+      },
+      "creation_timestamp": 0.0,
+      "rubrics": [
+        {
+          "rubric_id": "healthy_startup-1",
+          "rubric_content": {
+            "text_property": "Describes the service as starting normally, without inventing a failure."
+          }
+        },
+        {
+          "rubric_id": "healthy_startup-2",
+          "rubric_content": {
+            "text_property": "Uses a severity of info or warning, not error or critical."
+          }
+        }
+      ],
+      "final_session_state": {}
+    },
+    {
+      "eval_id": "payment_timeout",
+      "conversation": [
+        {
+          "invocation_id": "payment_timeout-1",
+          "user_content": {
+            "parts": [
+              {
+                "text": "{\"current_log\": \"[L1] 2026-10-27T12:00:00Z INFO payments started version=3.1.0\\n[L2] 2026-10-27T12:00:07Z INFO payments request_id=req-3001 charge created amount=1999 currency=USD\\n[L3] 2026-10-27T12:00:08Z INFO payments request_id=req-3001 charge succeeded gateway=example-gateway\\n[L4] 2026-10-27T12:02:20Z INFO payments request_id=req-3002 charge created amount=4500 currency=USD\\n[L5] 2026-10-27T12:02:35Z ERROR payments request_id=req-3002 gateway request timed out after 15000ms gateway=example-gateway\\n[L6] 2026-10-27T12:02:35Z ERROR payments request_id=req-3002 charge state unknown, outcome not confirmed\\n[L7] 2026-10-27T12:02:40Z WARN payments request_id=req-3002 retry scheduled attempt=2 idempotency_key=idem-3002\\n[L8] 2026-10-27T12:02:55Z ERROR payments request_id=req-3002 gateway request timed out after 15000ms gateway=example-gateway\\n[L9] 2026-10-27T12:02:55Z ERROR payments request_id=req-3002 payment timeout, charge state still unknown\", \"historical_incidents\": []}"
+              }
+            ],
+            "role": "user"
+          },
+          "creation_timestamp": 0.0
+        }
+      ],
+      "session_input": {
+        "app_name": "log_investigator",
+        "user_id": "eval",
+        "state": {}
+      },
+      "creation_timestamp": 0.0,
+      "rubrics": [
+        {
+          "rubric_id": "payment_timeout-1",
+          "rubric_content": {
+            "text_property": "Identifies the payment gateway timing out and the charge state being unknown."
+          }
+        },
+        {
+          "rubric_id": "payment_timeout-2",
+          "rubric_content": {
+            "text_property": "Presents the cause as tentative rather than a confirmed root cause."
+          }
+        }
+      ],
+      "final_session_state": {}
+    }
+  ],
+  "creation_timestamp": 0.0
+}

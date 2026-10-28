@@ -1,0 +1,4 @@
+{
+  "severity_at_least": "error",
+  "must_mention_any": ["payment", "timeout", "timed out", "gateway", "retry"]
+}

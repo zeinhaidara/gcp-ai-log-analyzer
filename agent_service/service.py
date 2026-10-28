@@ -20,7 +20,7 @@ from google.cloud import bigquery, firestore, storage
 from google.genai import types
 from pydantic import BaseModel, Field
 
-app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI()  # /docs, /redoc and /openapi.json are served; Cloud Run IAM still gates every route.
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_LOG_BYTES = 1024 * 1024
 MAX_MODEL_CHARS = 24000

@@ -86,6 +86,11 @@ class HandlerTests(unittest.TestCase):
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
 
+    def test_api_docs_are_served(self):
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+        self.assertIn("/pubsub", self.client.get("/openapi.json").json()["paths"])
+
     def test_ack_after_processing(self):
         with patch.object(service, "process", new=AsyncMock()) as process:
             self.assertEqual(self.client.post("/pubsub", json=message({"log_id": LOG_ID})).status_code, 204)

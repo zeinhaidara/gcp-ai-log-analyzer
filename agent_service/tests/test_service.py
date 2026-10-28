@@ -86,6 +86,51 @@ class HandlerTests(unittest.TestCase):
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
 
+    def test_health_makes_no_client_calls(self):
+        with patch.object(service, "clients") as clients:
+            self.assertEqual(self.client.get("/health").status_code, 200)
+        clients.assert_not_called()
+
+    def ready(self, db=None, objects=None, analytics=None):
+        trio = (db or Mock(), objects or Mock(), analytics or Mock())
+        env = {"LOG_BUCKET": "test-bucket", "BIGQUERY_TABLE": "p.d.incidents"}
+        with patch.object(service, "clients", return_value=trio), patch.dict(service.os.environ, env):
+            return self.client.get("/ready"), trio
+
+    def test_ready_when_all_checks_pass(self):
+        response, (db, objects, analytics) = self.ready()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready", "checks": {"firestore": "ok", "storage": "ok", "bigquery": "ok"}})
+        objects.bucket.assert_called_once_with("test-bucket")
+        objects.bucket.return_value.reload.assert_called_once()
+        objects.bucket.return_value.list_blobs.assert_not_called()
+        analytics.get_table.assert_called_once()
+        analytics.query.assert_not_called()
+
+    def test_ready_reports_one_failure_without_exception_text(self):
+        analytics = Mock()
+        analytics.get_table.side_effect = RuntimeError("secret ai-log-analyzer-511017 credentials")
+        response, _ = self.ready(analytics=analytics)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "not_ready", "checks": {"firestore": "ok", "storage": "ok", "bigquery": "failed"}})
+        self.assertNotIn("secret", response.text)
+        self.assertNotIn("511017", response.text)
+
+    def test_ready_times_out_slow_check(self):
+        import time
+        objects = Mock()
+        objects.bucket.return_value.reload.side_effect = lambda **kwargs: time.sleep(0.5)
+        with patch.object(service, "READY_TIMEOUT", 0.05):
+            response, _ = self.ready(objects=objects)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"], {"firestore": "ok", "storage": "failed", "bigquery": "ok"})
+
+    def test_ready_fails_when_configuration_is_missing(self):
+        with patch.object(service, "clients", return_value=(Mock(), Mock(), Mock())), patch.dict(service.os.environ, {}, clear=True):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["storage"], "failed")
+
     def test_ack_after_processing(self):
         with patch.object(service, "process", new=AsyncMock()) as process:
             self.assertEqual(self.client.post("/pubsub", json=message({"log_id": LOG_ID})).status_code, 204)

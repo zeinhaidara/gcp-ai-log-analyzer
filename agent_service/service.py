@@ -11,6 +11,7 @@ from functools import lru_cache
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig
 from google.adk.runners import Runner
@@ -229,7 +230,48 @@ def parse_message(envelope):
 
 @app.get("/health")
 async def health():
+    # No cloud calls.
     return {"status": "ok", "service": "adk-agent"}
+
+
+READY_TIMEOUT = 2
+
+
+def check_firestore():
+    db = clients()[0]
+    # Single-document get; the document need not exist.
+    db.collection(os.getenv("FIRESTORE_COLLECTION", "logs")).document("_readiness").get(timeout=READY_TIMEOUT, retry=None)
+
+
+def check_storage():
+    # Metadata read, no listing.
+    clients()[1].bucket(os.environ["LOG_BUCKET"]).reload(timeout=READY_TIMEOUT, retry=None)
+
+
+def check_bigquery():
+    # Metadata read, no query job.
+    clients()[2].get_table(os.environ["BIGQUERY_TABLE"], timeout=READY_TIMEOUT, retry=None)
+
+
+async def run_check(name, check):
+    try:
+        await asyncio.wait_for(asyncio.to_thread(check), timeout=READY_TIMEOUT)
+        return name, "ok"
+    except Exception:
+        # Detail stays in the server log.
+        logging.warning("Readiness check failed: %s", name, exc_info=True)
+        return name, "failed"
+
+
+@app.get("/ready")
+async def ready():
+    checks = dict(await asyncio.gather(
+        run_check("firestore", check_firestore),
+        run_check("storage", check_storage),
+        run_check("bigquery", check_bigquery)))
+    if all(result == "ok" for result in checks.values()):
+        return {"status": "ready", "checks": checks}
+    return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
 
 
 @app.post("/pubsub")

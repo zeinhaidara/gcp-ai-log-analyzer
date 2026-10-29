@@ -27,7 +27,8 @@ steps:
     pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
     python -m unittest discover -s tests -v
     bandit -q service.py
-    pip-audit -r requirements.txt --progress-spinner off
+    # CVE-2026-114603 is a CPU DoS in opentelemetry-api's inbound tracestate header parser, which the agent never calls; remove when google-adk allows opentelemetry-api>=1.45.1
+    pip-audit -r requirements.txt --progress-spinner off --ignore-vuln CVE-2026-114603
 - id: build-images
   name: gcr.io/cloud-builders/docker
   entrypoint: sh

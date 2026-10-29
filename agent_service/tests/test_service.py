@@ -92,7 +92,7 @@ class HandlerTests(unittest.TestCase):
         clients.assert_not_called()
 
     def ready(self, db=None, objects=None, analytics=None):
-        trio = (db or Mock(), objects or Mock(), analytics or Mock())
+        trio = service.Clients(db or Mock(), objects or Mock(), analytics or Mock())
         env = {"LOG_BUCKET": "test-bucket", "BIGQUERY_TABLE": "p.d.incidents"}
         with patch.object(service, "clients", return_value=trio), patch.dict(service.os.environ, env):
             return self.client.get("/ready"), trio
@@ -126,10 +126,40 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(response.json()["checks"], {"firestore": "ok", "storage": "failed", "bigquery": "ok"})
 
     def test_ready_fails_when_configuration_is_missing(self):
-        with patch.object(service, "clients", return_value=(Mock(), Mock(), Mock())), patch.dict(service.os.environ, {}, clear=True):
+        with patch.object(service, "clients", return_value=service.Clients(Mock(), Mock(), Mock())), patch.dict(service.os.environ, {}, clear=True):
             response = self.client.get("/ready")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["checks"]["storage"], "failed")
+
+    def test_clients_are_built_once_across_threads(self):
+        import threading
+        import time
+        def slow(**kwargs):
+            time.sleep(0.05)
+            return Mock()
+        with patch.object(service, "_clients", None), patch.dict(service.os.environ, {"GOOGLE_CLOUD_PROJECT": "p"}), \
+                patch.object(service.firestore, "Client", side_effect=slow) as db, \
+                patch.object(service.storage, "Client", side_effect=slow) as objects, \
+                patch.object(service.bigquery, "Client", side_effect=slow) as analytics:
+            results = []
+            threads = [threading.Thread(target=lambda: results.append(service.clients())) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(len(results), 8)
+        self.assertTrue(all(result is results[0] for result in results))
+        self.assertEqual((db.call_count, objects.call_count, analytics.call_count), (1, 1, 1))
+        self.assertIsInstance(results[0], service.Clients)
+
+    def test_client_build_failure_is_retried(self):
+        with patch.object(service, "_clients", None), patch.dict(service.os.environ, {}, clear=True):
+            with self.assertRaises(KeyError):
+                service.clients()
+            with patch.dict(service.os.environ, {"GOOGLE_CLOUD_PROJECT": "p"}), \
+                    patch.object(service.firestore, "Client"), patch.object(service.storage, "Client"), \
+                    patch.object(service.bigquery, "Client"):
+                self.assertIsInstance(service.clients(), service.Clients)
 
     def test_ack_after_processing(self):
         with patch.object(service, "process", new=AsyncMock()) as process:

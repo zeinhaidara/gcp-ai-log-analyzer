@@ -5,10 +5,10 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -55,11 +55,26 @@ def grounded_findings(result, content):
     return findings
 
 
-@lru_cache
+class Clients(NamedTuple):
+    db: firestore.Client
+    objects: storage.Client
+    analytics: bigquery.Client
+
+
+_clients = None
+_clients_lock = threading.Lock()
+
+
 def clients():
-    project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    return (firestore.Client(project=project, database=os.getenv("FIRESTORE_DATABASE", "(default)")),
-            storage.Client(project=project), bigquery.Client(project=project))
+    global _clients
+    if _clients is None:
+        with _clients_lock:
+            if _clients is None:
+                project = os.environ["GOOGLE_CLOUD_PROJECT"]
+                _clients = Clients(
+                    firestore.Client(project=project, database=os.getenv("FIRESTORE_DATABASE", "(default)")),
+                    storage.Client(project=project), bigquery.Client(project=project))
+    return _clients
 
 
 async def investigate(content, history=None):
@@ -238,17 +253,17 @@ READY_TIMEOUT = 2
 
 
 def check_firestore():
-    db = clients()[0]
+    db = clients().db
     # The document need not exist.
     db.collection(os.getenv("FIRESTORE_COLLECTION", "logs")).document("_readiness").get(timeout=READY_TIMEOUT, retry=None)
 
 
 def check_storage():
-    clients()[1].bucket(os.environ["LOG_BUCKET"]).reload(timeout=READY_TIMEOUT, retry=None)
+    clients().objects.bucket(os.environ["LOG_BUCKET"]).reload(timeout=READY_TIMEOUT, retry=None)
 
 
 def check_bigquery():
-    clients()[2].get_table(os.environ["BIGQUERY_TABLE"], timeout=READY_TIMEOUT, retry=None)
+    clients().analytics.get_table(os.environ["BIGQUERY_TABLE"], timeout=READY_TIMEOUT, retry=None)
 
 
 async def run_check(name, check):

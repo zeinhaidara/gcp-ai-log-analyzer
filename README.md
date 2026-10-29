@@ -11,7 +11,7 @@ Findings are tentative suggestions. Use synthetic logs without credentials.
 
 Upload UTF-8 `.txt`, `.log` or `.jsonl` files (up to 1 MiB), or try one of three built-in scenarios (retry storm, token expiry, payment recovery). Previewing a scenario saves nothing and calls no model.
 
-The replay parser (`replay.py`) reads structured text, JSON Lines and Cloud Logging JSON. It builds a timeline and a service map from recorded fields only. A shared trace ID alone does not create a connection, and the first failure shown is not necessarily the root cause. It scans up to 12,000 lines, samples to 1,200 events and maps at most 20 services. Replay makes no model calls.
+The replay parser (`dashboard/replay.py`) reads structured text, JSON Lines and Cloud Logging JSON. It builds a timeline and a service map from recorded fields only. A shared trace ID alone does not create a connection, and the first failure shown is not necessarily the root cause. It scans up to 12,000 lines, samples to 1,200 events and maps at most 20 services. Replay makes no model calls.
 
 ## Architecture
 
@@ -22,10 +22,8 @@ Diagrams: [docs/architecture.md](docs/architecture.md).
 ## Layout
 
 ```
-app.py, storage.py, analytics.py, investigations.py, replay.py   dashboard (WSGI)
-static/                     dashboard UI and demo logs
-tests/                      dashboard tests
-requirements.txt, Dockerfile
+dashboard/                  public dashboard (WSGI): app.py, storage.py, analytics.py, investigations.py,
+                            replay.py, static/ (UI and demo logs), tests/, Dockerfile, requirements.txt
 agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
                             deploy-agent.ps1 (one-time bootstrap), smoke-test*.ps1 (live checks)
 evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
@@ -37,23 +35,24 @@ cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
 ## Run locally
 
 ```powershell
+cd dashboard
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -c "from wsgiref.simple_server import make_server; from app import application; make_server('127.0.0.1', 8080, application).serve_forever()"
 ```
 
-Locally the dashboard uses SQLite (`data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild.yaml`.
+Locally the dashboard uses SQLite (`dashboard/data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild.yaml`.
 
 ## Tests
 
 | Component | Command | Notes |
 | --- | --- | --- |
-| Dashboard | `python -m unittest discover -s tests -v` | root `requirements.txt` |
+| Dashboard | `cd dashboard && python -m unittest discover -s tests -v` | `dashboard/requirements.txt` |
 | Agent | `cd agent_service && python -m unittest discover -s tests -v` | separate venv with `agent_service/requirements.txt` |
 | Eval scorer | `python -m unittest discover -s evals -v` | no dependencies, no cloud access |
 
-Security checks, as CI runs them: `bandit -q app.py storage.py analytics.py investigations.py replay.py` and, from `agent_service`, `bandit -q service.py`.
+Security checks, as CI runs them: from `dashboard`, `bandit -q app.py storage.py analytics.py investigations.py replay.py`; from `agent_service`, `bandit -q service.py`.
 
 ## Golden-log eval
 

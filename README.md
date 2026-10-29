@@ -50,7 +50,7 @@ Locally the dashboard uses SQLite (`dashboard/data/logs.db`) and shows AI as dis
 | --- | --- | --- |
 | Dashboard | `cd dashboard && python -m unittest discover -s tests -v` | `dashboard/requirements.txt` |
 | Agent | `cd agent_service && python -m unittest discover -s tests -v` | separate venv with `agent_service/requirements.txt` |
-| Eval scorer | `python -m unittest discover -s evals -v` | no dependencies, no cloud access |
+| Eval scorer and judge | `python -m unittest discover -s evals -v` | needs only `pydantic`; the judge is mocked, no cloud access |
 
 Security checks, as CI runs them: from `dashboard`, `bandit -q app.py storage.py analytics.py investigations.py replay.py`; from `agent_service`, `bandit -q service.py`.
 
@@ -63,7 +63,7 @@ python evals/golden_logs.py --threshold 0.8
 adk eval evals/adk/log_investigator evals/adk/golden-logs.evalset.json --config_file_path evals/adk/eval-config.json
 ```
 
-`golden_logs.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/golden_logs.py --write-adk-evalset`. Neither eval runs in CI yet.
+A fixture passes only if the rule-based scorer passes and a Gemini judge on Vertex AI agrees the findings fit the log and expectations. The judge uses the model set in `evals/adk/eval-config.json`; any judge error counts as a failure. `--no-judge` runs the scorer alone. `golden_logs.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/golden_logs.py --write-adk-evalset`. Neither eval runs in CI yet.
 
 ## Endpoints
 

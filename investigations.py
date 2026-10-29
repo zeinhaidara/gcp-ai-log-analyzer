@@ -33,7 +33,3 @@ class StoreInvestigations:
             return self.store.enqueue(log_id)
         except StorageUnavailable as exc:
             raise InvestigationUnavailable() from exc
-
-
-def create_investigations(store):
-    return StoreInvestigations(store)

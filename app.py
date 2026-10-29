@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from storage import StorageUnavailable, create_store
 from analytics import incident_analytics
-from investigations import create_investigations, InvestigationUnavailable, InvestigationNotFound
+from investigations import StoreInvestigations, InvestigationUnavailable, InvestigationNotFound
 from replay import build_replay
 
 MAX_BODY = 1024 * 1024
@@ -16,7 +16,7 @@ def create_app(database=None, store=None, analytics=None, investigations=None):
     store = store if store is not None else create_store(database)
     analytics = analytics if analytics is not None else incident_analytics
     supplied_investigations = investigations
-    investigations = investigations if investigations is not None else create_investigations(store)
+    investigations = investigations if investigations is not None else StoreInvestigations(store)
 
     def respond(start_response, status, payload, content_type="application/json"):
         body = payload.encode() if isinstance(payload, str) else json.dumps(payload).encode()

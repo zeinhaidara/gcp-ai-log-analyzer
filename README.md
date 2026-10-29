@@ -1,165 +1,70 @@
 # GCP AI Log Analyzer
 
-A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then review the agent's Gemini findings.
+Upload a synthetic log, replay the incident it records, and review a Gemini investigation of it.
 
-## Incident Time Machine
+- **Dashboard** (public Cloud Run service `log-analyzer-dev`): uploads, ERROR/WARN counts, incident replay, seven-day reports.
+- **Agent** (private Cloud Run service `log-analyzer-dev-agent`): receives a log ID from Pub/Sub, makes one Gemini call through ADK, and saves structured findings.
 
-Home offers **Open a log** and **Try a demo**, followed by your three most recent logs.
-Use **Saved logs** to search the full recent library, or **Reports** for seven-day totals.
-Within a replay, the service map and timeline stay visible; expand **Event trail** or
-**Explore the evidence** when you need more detail. Saved cases support `#case={UUID}`
-links, and browser navigation returns to Home, Saved logs or Reports.
+Findings are tentative suggestions. Use synthetic logs without credentials.
 
-Upload UTF-8 `.txt`, `.log` or `.jsonl` files, or open a saved log to reconstruct an incident, scrub its timeline, replay service signals,
-and jump to the first recorded fault or an explicit recovery. Filter by request/trace ID,
-select a service to inspect its event trail, and follow source references into the numbered
-original log. The Evidence panel supports guided timeline questions and keyword search;
-the separate AI findings panel shows Gemini's tentative explanations with validated source
-line references. Export a case as JSON for a reproducible investigation record.
+## Incident replay
 
-Three built-in synthetic scenarios demonstrate a retry storm, token expiry and payment
-recovery. Previewing a scenario neither saves an upload nor calls Gemini. Choose
-**Investigate this scenario** to save it through the normal upload/agent workflow.
+Upload UTF-8 `.txt`, `.log` or `.jsonl` files (up to 1 MiB), or try one of three built-in scenarios (retry storm, token expiry, payment recovery). Previewing a scenario saves nothing and calls no model.
 
-`GET /logs/{UUID}/replay` reads the saved file once, includes its original content and
-returns a bounded reconstruction plus available findings. It also works for old uploads
-and local SQLite storage; it adds no cloud resources or per-frame model calls.
-`GET /replay/demo/{retry-storm|token-expiry|payment-recovery}` reconstructs the demo files.
+The replay parser (`replay.py`) reads structured text, JSON Lines and Cloud Logging JSON. It builds a timeline and a service map from recorded fields only. A shared trace ID alone does not create a connection, and the first failure shown is not necessarily the root cause. It scans up to 12,000 lines, samples to 1,200 events and maps at most 20 services. Replay makes no model calls.
 
-The parser recognizes structured text, JSON Lines and Cloud Logging JSON, including
-timestamps, severity, service/logger fields, request IDs and explicit target/upstream fields.
-Connections represent recorded call relationships, not proof of successful calls. A shared
-trace ID alone does not create an edge. Map colors represent recorded signals, not live health.
-The first observed failure is not necessarily the root cause. AI hypotheses remain separate.
-
-When all events have compatible valid timestamps, replay uses chronological order while
-retaining original source line numbers. Missing/mixed clocks use source order without an
-invented duration. Time-only midnight rollovers are labeled assumptions. Reconstruction scans
-up to 12,000 lines, samples to 1,200 events and maps at most 20 services, with visible coverage
-notes. Full source remains accessible. AI still sees the first 24,000 source characters;
-numbering adds prompt formatting. Existing investigations need no migration.
-
-Playback: **Space** toggles play, **← / →** step through events when focus is outside controls.
-The layout supports mobile screens, keyboard controls and reduced-motion preferences.
-
-## Deployment flow
-
-```mermaid
-flowchart LR
-  GitHub[GitHub dev branch] --> Build[Cloud Build]
-  Build --> Checks[Tests and security scans]
-  Checks --> Registry[Artifact Registry]
-  Checks -->|deploy agent then dashboard| Run[Cloud Run services]
-  Registry -->|scanned images| Run
-```
-
-Artifact Registry stores the two container images. Cloud Run runs the dashboard and the private ADK processing service. A merge into `dev` triggers deployment; promotion into `main` does not create a separate production deployment.
-
-## Application data flow
+## Data flow
 
 ```mermaid
 flowchart TB
-  User[User uploads txt log] --> Dashboard[Cloud Run dashboard and API]
+  User[User uploads log] --> Dashboard[Cloud Run dashboard]
   Dashboard -->|raw file| Storage[Cloud Storage]
   Dashboard -->|metadata and counts| Logs[Firestore logs]
-  Dashboard -->|saved log ID| Topic[Pub/Sub]
-  Topic -->|authenticated push| Agent[Private Cloud Run ADK agent]
-  Storage -->|retrieve raw file| Agent
-  Agent -->|status and AI findings| Findings[Firestore investigations]
-  Findings -->|API polling| Dashboard
-  Agent -->|incident summary| BQ[BigQuery incidents]
-  BQ -->|seven-day reporting| Dashboard
-  Dashboard -->|findings and reports| User
-```
-
-The dashboard saves the file and metadata before queuing its ID. **Cloud Storage** holds the actual log; **Firestore** holds metadata, investigation status and detailed findings. **BigQuery** holds incident summaries for reports and historical context. Reports count completed investigations and refresh at most once per minute.
-
-## AI investigation flow
-
-```mermaid
-flowchart TB
-  Request[Pub/Sub log ID] --> Agent[ADK agent on Cloud Run]
-  Storage[Cloud Storage raw log] -->|current log| Agent
-  BQ[BigQuery past incidents] -->|up to five recent matches| Agent
-  Agent -->|log and historical context| Gemini[Gemini on Vertex AI]
+  Dashboard -->|log ID only| Topic[Pub/Sub]
+  Topic -->|authenticated push| Agent[Private Cloud Run agent]
+  Storage -->|raw log| Agent
+  BQ[BigQuery incidents] -->|up to five recent matches| Agent
+  Agent -->|log and history| Gemini[Gemini on Vertex AI]
   Gemini -->|structured findings| Agent
-  Agent -->|detailed findings| Firestore[Firestore investigations]
-  Agent -->|new incident summary| BQ
-  Firestore -->|dashboard API| User[User reviews suggestions]
+  Agent -->|status and findings| Findings[Firestore investigations]
+  Agent -->|incident summary| BQ
+  Findings -->|API polling| Dashboard
+  BQ -->|seven-day aggregates| Dashboard
 ```
 
-ADK is the agent framework; Gemini is the model accessed through Vertex AI. Application code retrieves the log and queries recent history before one model call. The model does not run SQL or write cloud resources. If history lookup fails, the investigation continues using the current log. Findings include severity, summary, a tentative cause and suggested next steps.
+The dashboard stores the file and metadata before it publishes `{"log_id": "UUID"}`. Raw text never enters the queue. The agent sends Gemini the first 24,000 characters, with numbered lines. The model has no tools; application code does every read and write. A Firestore lease and a deterministic BigQuery job ID make repeated Pub/Sub deliveries safe.
 
-## VPC network layer
+## Network
 
 ```mermaid
 flowchart TB
   User[User browser] -->|public HTTPS| Dashboard[Cloud Run dashboard]
-  Agent[Private Cloud Run ADK agent]
+  PubSub[Pub/Sub push] -->|IAM-authenticated| Agent[Cloud Run agent]
   Dashboard -->|Direct VPC egress| Subnet
   Agent -->|Direct VPC egress| Subnet
   subgraph VPC[log-analyzer-dev-vpc]
-    Subnet["Subnet: 10.42.0.0/24 · us-central1"]
-    Firewall["Egress firewall: allow API HTTPS"]
-    Access[Private Google Access]
-    DNS[Private Google API DNS]
-    Subnet --> Firewall --> Access
-    DNS -.->|resolves API names| Access
+    Subnet["log-analyzer-dev-subnet 10.42.0.0/24"]
+    Firewall["Egress: allow TCP 443 to 199.36.153.8/30, deny other IPv4"]
+    Subnet --> Firewall
   end
-  Access -->|private.googleapis.com| APIs[Google managed APIs]
-  APIs --> Services["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
+  Firewall -->|private.googleapis.com| APIs["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
 ```
 
-Both Cloud Run services send all outbound traffic through `log-analyzer-dev-subnet`. Private DNS resolves Google API names to `199.36.153.8/30`; a route and firewall allow HTTPS to those addresses and deny other IPv4 egress for the app's network tag. No NAT or VPC connector is used.
+Private DNS zone `log-analyzer-dev-googleapis` resolves Google API names to `private.googleapis.com`. No NAT or VPC connector is used. IAM controls data access; this is not a VPC Service Controls perimeter. Provisioned by `infra/Configure-Network.ps1`.
 
-The dashboard keeps its public HTTPS entry point. Pub/Sub invokes the agent through its authenticated Cloud Run URL. The VPC controls outbound connectivity; service-account IAM controls data access. Storage, Firestore, BigQuery, Pub/Sub and Vertex AI remain managed services outside the subnet. This configuration does not create a VPC Service Controls perimeter.
+## Layout
 
-## Two pipeline files
-
-| File | Automatic event | What happens |
-| --- | --- | --- |
-| `cloudbuild-ci.yaml` | Open/update a PR targeting `dev` or `main` | Test and audit both apps; build and scan both containers |
-| `cloudbuild.yaml` | Push or merge into `dev` | Same checks, then publish both images and deploy the agent followed by the dashboard |
-
-Cloud Build trigger settings contain the pipeline name, repository event and branch filter. YAML contains ordered `steps`, each with a readable `id`, its builder image `name`, and commands in `args`. Cloud Build uses `steps`; it does not have a `tasks` field. Any failed test, Bandit check, dependency audit or HIGH/CRITICAL image scan stops the pipeline before publication. Each release builds, scans and deploys the same `$BUILD_ID` image tags.
-
-Existing triggers in `ai-log-analyzer-511017`, `us-central1`:
-
-- `log-analyzer-pr-validation`: PR base `^(dev|main)$`, logging-only `log-analyzer-dev-ci` identity.
-- `log-analyzer-dev-push`: push branch `^dev$`, `log-analyzer-dev-build` identity with registry/deployment access.
-
-They use Zein's `github-log-analyzer` repository connection. Work on a personal branch, PR into `dev`, then promote reviewed changes to protected `main`. No production trigger exists. A feature-branch push alone does not deploy; the PR runs validation, and its merge into `dev` deploys automatically.
-
-## Existing GCP settings
-
-| Resource | Name |
-| --- | --- |
-| Project / region | `ai-log-analyzer-511017` / `us-central1` |
-| Artifact Registry | `log-analyzer-dev` |
-| Cloud Run | `log-analyzer-dev`, `log-analyzer-dev-agent` |
-| Raw-log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
-| Firestore | `(default)`; `logs` and `investigations` |
-| Pub/Sub topic | `log-analyzer-dev-investigations` |
-| BigQuery table | `ai-log-analyzer-511017.log_analyzer_dev.incidents` |
-| VPC / subnet | `log-analyzer-dev-vpc` / `log-analyzer-dev-subnet` |
-| Subnet range / region | `10.42.0.0/24` / `us-central1` |
-| Private DNS zone | `log-analyzer-dev-googleapis` |
-
-The YAML `substitutions` configure these resource names, runtime accounts, model, labels and instance limit. Override them on the existing deployment trigger when needed. Attached service accounts authenticate through ADC; no JSON keys or GitHub GCP secrets are needed. Infrastructure and IAM are provisioned separately, not recreated by a release. Both services use Direct VPC egress through `log-analyzer-dev-vpc`, with private Google API access and restricted outbound traffic. IAM controls access to the managed storage and database services.
-
-The dashboard is public; the agent requires IAM authentication. Both services use minimum zero and maximum one instance. The agent also uses concurrency one and a 180-second request deadline. Labels identify the app, development environment, owner and Cloud Build management. Model calls and cloud usage can incur charges; instance limits are not a spending cap.
-
-## App integration
-
-`POST /logs` stores raw content in Storage and metadata in Firestore before publishing `{"log_id":"UUID"}` to the existing topic. Publishing uses the Pub/Sub REST API with attached ADC and a bounded timeout. Raw log text is not placed in the queue.
-
-The agent receives authenticated push at `/pubsub`, reads the raw log, calls Gemini, saves findings to Firestore and loads an incident into BigQuery. `GET /investigations/UUID` exposes status and findings; the dashboard polls while the selected log is running. `POST /investigations/UUID` retries delivery using the saved log ID. Completed or currently processing investigations are not republished through this endpoint. An ambiguous publish can deliver twice; the agent's existing lease/completion checks handle duplicate delivery.
-
-If publication fails, the upload still returns its saved ID with `investigation.status=enqueue_failed`. Retry the investigation, not the upload. Successful publishing records `queued`; the agent then records processing and completion status. Older uploads without dispatch metadata show `waiting`. Automatic Pub/Sub retries/DLQ remain configured by infrastructure. Findings are AI suggestions requiring review. Use synthetic logs without credentials.
-
-## Open the app
-
-Open the public [Incident Desk dashboard](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app). Upload a synthetic log, then review its progress and AI findings. The separate agent URL remains authenticated and returns 403 to anonymous requests.
+```
+app.py, storage.py, analytics.py, investigations.py, replay.py   dashboard (WSGI)
+static/                     dashboard UI and demo logs
+tests/                      dashboard tests
+requirements.txt, Dockerfile
+agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
+                            Deploy-Agent.ps1 (one-time bootstrap), Smoke-Test*.ps1 (live checks)
+evals/                      golden-log eval: fixtures/, run_eval.py, test_score.py, adk/
+infra/                      Configure-Network.ps1, Analytics-VPC-handoff.md, terraform/ (notes, not applied)
+cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
+```
 
 ## Run locally
 
@@ -168,15 +73,72 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -c "from wsgiref.simple_server import make_server; from app import application; make_server('127.0.0.1', 8080, application).serve_forever()"
-python -m unittest discover -s tests -v
 ```
 
-Local uploads use SQLite and clearly show that AI is disabled. Cloud Run sets `STORAGE_BACKEND=gcp`, `GOOGLE_CLOUD_PROJECT`, `LOG_BUCKET`, `FIRESTORE_DATABASE`, `FIRESTORE_COLLECTION`, and `INVESTIGATION_TOPIC`. Agent tests require its separate dependencies: install `agent_service/requirements.txt` in a separate virtual environment, then run `python -m unittest discover -s tests -v` from `agent_service`.
+Locally the dashboard uses SQLite (`data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild.yaml`.
 
-See [agent details and the smoke test](agent_service/README.md). [Pub/Sub publishing reference](https://docs.cloud.google.com/pubsub/docs/publisher).
+## Tests
 
-## Analytics and private networking
+| Component | Command | Notes |
+| --- | --- | --- |
+| Dashboard | `python -m unittest discover -s tests -v` | root `requirements.txt` |
+| Agent | `cd agent_service && python -m unittest discover -s tests -v` | separate venv with `agent_service/requirements.txt` |
+| Eval scorer | `python -m unittest discover -s evals -v` | no dependencies, no cloud access |
 
-The dashboard includes seven-day BigQuery incident reporting. The ADK agent uses up to five recent matching incidents as context. Both services retain restricted Direct VPC egress and private Google API access. See [the analytics and VPC handoff](infra/Analytics-VPC-handoff.md) for the full data flow and CI/CD variables.
+Security checks, as CI runs them: `bandit -q app.py storage.py analytics.py investigations.py replay.py` and, from `agent_service`, `bandit -q service.py`.
 
-Both `/investigations/{UUID}` and `/logs/{UUID}/investigation` support status lookup and retry for saved uploads.
+## Golden-log eval
+
+Four synthetic logs in `evals/fixtures/` each have an `.expected.json` with a minimum (and optional maximum) severity and keywords the summary or likely cause must mention. These calls reach Vertex AI and cost money. They need the agent dependencies and `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
+
+```
+python evals/run_eval.py --threshold 0.8
+adk eval evals/adk/log_investigator evals/adk/golden_logs.evalset.json --config_file_path evals/adk/eval_config.json
+```
+
+`run_eval.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/adk/build_evalset.py`. Neither eval runs in CI yet.
+
+## Endpoints
+
+Dashboard: `GET /health`, `POST /logs`, `GET /logs`, `GET /logs/{id}`, `GET /logs/{id}/replay`, `GET|POST /logs/{id}/investigation`, `GET|POST /investigations/{id}`, `GET /analytics`, `GET /replay/demo/{name}`.
+
+Agent (IAM required):
+- `GET /health`: liveness, no cloud calls.
+- `GET /ready`: reads one Firestore document, the raw-log bucket's metadata and the incidents table's metadata, concurrently, 2 seconds each. Returns 200 `ready` or 503 `not_ready`, with only `ok` or `failed` per check.
+- `POST /pubsub`: Pub/Sub push receiver.
+
+## Deployment
+
+| File | Trigger | Does |
+| --- | --- | --- |
+| `cloudbuild-ci.yaml` | PR into `dev` or `main` | tests, Bandit, pip-audit, image build and Trivy scan for both services |
+| `cloudbuild.yaml` | push to `dev` | same checks, then publish both images and deploy the agent, then the dashboard |
+
+Work on a `zein/...` branch, PR into `dev` (merging deploys), then promote to protected `main`. No production pipeline exists. Mahmoud owns both pipeline files. Runtime identities authenticate through ADC; there are no key files.
+
+## Infrastructure
+
+Project `ai-log-analyzer-511017`, region `us-central1`.
+
+| Resource | Name |
+| --- | --- |
+| Cloud Run | `log-analyzer-dev`, `log-analyzer-dev-agent` |
+| Artifact Registry | `log-analyzer-dev` |
+| Raw-log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
+| Firestore | `(default)`: `logs`, `investigations` |
+| Pub/Sub topic | `log-analyzer-dev-investigations` |
+| BigQuery | `ai-log-analyzer-511017.log_analyzer_dev.incidents`, partitions expire after 7 days |
+
+Terraform state: bucket `ai-log-analyzer-511017-tfstate`, prefix `dev`. Nothing is applied yet; planned changes are in [infra/terraform](infra/terraform/README.md). Details: [agent](agent_service/README.md), [analytics and VPC](infra/Analytics-VPC-handoff.md).
+
+## Known gaps
+
+- The dashboard is public and unauthenticated. `GET /logs` lists recent uploads and `GET /logs/{id}` returns any upload's content.
+- No upload rate limit or budget alert. Instance limits cap parallelism, not spend.
+- Identical uploads each trigger a Gemini call; content-hash reuse is planned.
+- Service and category detection (`classify_log`) is keyword-based with three categories. Unmatched logs are `unclassified` and get less history.
+- Agent ingress is `all`; internal-only is documented but not applied.
+- No VPC Service Controls perimeter.
+- Firestore documents and raw logs have no retention cleanup.
+- A crash after the model responds but before findings are saved repeats a paid call.
+- The golden-log evals have not been run against Vertex AI and are not in CI.

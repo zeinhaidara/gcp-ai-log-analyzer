@@ -108,8 +108,8 @@ New trigger substitutions (resource names, not secrets):
 
 The dashboard environment also needs `BIGQUERY_LOCATION=us-central1` and
 `INVESTIGATION_TOPIC=log-analyzer-dev-investigations`; both are passed by Cloud Build.
-Agent deployments use `agent_service/Deploy-Agent.ps1 -Tag UNIQUE_TAG`:
-it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
+Routine agent releases go through `cloudbuild.yaml`. `agent_service/Deploy-Agent.ps1 -Tag UNIQUE_TAG` is the
+one-time bootstrap: it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
 Both pipeline files now test, audit, build and scan the dashboard and agent independently.
 The dev release deploys the private agent before the public dashboard using the same build ID.
 

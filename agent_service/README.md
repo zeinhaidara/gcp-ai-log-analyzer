@@ -61,7 +61,7 @@ For an existing uploaded log, manually start an investigation:
 powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
-Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
+Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations, hypotheses with cited line numbers), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
 
 ## Limits and recovery
 

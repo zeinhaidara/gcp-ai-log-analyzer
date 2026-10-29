@@ -89,3 +89,5 @@ flowchart LR
 ```
 
 The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../README.md#vpc-network-layer).
+
+Planned, not applied: internal-only ingress for the agent. Pub/Sub push keeps working, and the dashboard is unaffected because it only publishes to Pub/Sub. Direct developer access, including `gcloud run services proxy`, would stop. See [infra/terraform](../infra/terraform/README.md).

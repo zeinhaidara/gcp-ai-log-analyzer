@@ -22,7 +22,7 @@ Why: the agent's only caller is the Pub/Sub push subscription. Its URL does not 
 Still works:
 - Pub/Sub push. Cloud Run treats Pub/Sub subscriptions as internal when they are in the same project and target the default `run.app` URL. Both hold here. Source: [Cloud Run ingress](https://docs.cloud.google.com/run/docs/securing/ingress), checked 2026-10-29.
 - Dashboard to agent. The dashboard never calls the agent; it publishes the log ID to Pub/Sub.
-- `Smoke-Test.ps1` and `Smoke-Test-App.ps1`. They call the dashboard, Pub/Sub, Firestore and BigQuery, not the agent.
+- `smoke-test.ps1` and `smoke-test-app.ps1`. They call the dashboard, Pub/Sub, Firestore and BigQuery, not the agent.
 
 Stops working:
 - Direct requests to the agent URL from a developer machine, including `gcloud run services proxy` to reach `/ready` or `/docs`.

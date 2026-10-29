@@ -23,7 +23,7 @@ flowchart LR
 
 The root `cloudbuild-ci.yaml` validates both services on PRs into `dev` or `main`. The root `cloudbuild.yaml` publishes scanned images and deploys both services on pushes to `dev`, using the existing build identity. The agent deploys first; the dashboard deploys second. Model, identities and resource settings are substitutions in that YAML. No new pipeline folders or infrastructure provisioning steps are needed.
 
-`Deploy-Agent.ps1` is the original one-time bootstrap script; routine releases use Cloud Build and do not rerun its IAM/table/subscription setup.
+`deploy-agent.ps1` is the original one-time bootstrap script; routine releases use Cloud Build and do not rerun its IAM/table/subscription setup.
 
 | Setting | Value |
 |---|---|
@@ -53,12 +53,12 @@ After successfully storing `logs/{UUID}.txt` and its `logs/{UUID}` Firestore doc
 
 The dashboard publishes through the Pub/Sub REST API using its attached runtime identity. Publish failures keep the saved log ID; `POST /investigations/{log_id}` retries without another upload. `GET /investigations/{log_id}` returns status/findings without downloading raw content on each poll. No investigation document exists until the message reaches the agent.
 
-To verify automatic upload-to-findings integration, run `Smoke-Test.ps1` without `-LogId`; it uploads one synthetic log and waits for the result and one BigQuery row. It does not manually publish after an automatic upload.
+To verify automatic upload-to-findings integration, run `smoke-test.ps1` without `-LogId`; it uploads one synthetic log and waits for the result and one BigQuery row. It does not manually publish after an automatic upload.
 
 For an existing uploaded log, manually start an investigation:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
+powershell.exe -ExecutionPolicy Bypass -File .\smoke-test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
 Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations, hypotheses with cited line numbers), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
@@ -77,7 +77,7 @@ References: [ADK deployment](https://google.github.io/adk-docs/deploy/cloud-run/
 
 ## Historical incident context and VPC
 
-Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../infra/Analytics-VPC-handoff.md).
+Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../infra/analytics-vpc-handoff.md).
 
 ```mermaid
 flowchart LR

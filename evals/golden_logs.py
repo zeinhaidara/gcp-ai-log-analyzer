@@ -7,16 +7,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "fixtures"
-EVALSET = ROOT / "adk" / "golden_logs.evalset.json"
+EVALSET = ROOT / "adk" / "golden-logs.evalset.json"
 SEVERITY_ORDER = ("info", "warning", "error", "critical")
 RUBRICS = {
-    "db_timeout": ["Identifies database connection timeouts or pool exhaustion as the observed failure.",
+    "db-timeout": ["Identifies database connection timeouts or pool exhaustion as the observed failure.",
                    "Presents the cause as tentative rather than a confirmed root cause."],
-    "auth_expired": ["Identifies expired tokens causing HTTP 401 authentication failures.",
+    "auth-expired": ["Identifies expired tokens causing HTTP 401 authentication failures.",
                      "Presents the cause as tentative rather than a confirmed root cause."],
-    "payment_timeout": ["Identifies the payment gateway timing out and the charge state being unknown.",
+    "payment-timeout": ["Identifies the payment gateway timing out and the charge state being unknown.",
                         "Presents the cause as tentative rather than a confirmed root cause."],
-    "healthy_startup": ["Describes the service as starting normally, without inventing a failure.",
+    "healthy-startup": ["Describes the service as starting normally, without inventing a failure.",
                         "Uses a severity of info or warning, not error or critical."],
 }
 
@@ -70,7 +70,7 @@ def write_adk_evalset():
             "rubrics": [{"rubric_id": f"{name}-{index}", "rubric_content": {"text_property": text}}
                         for index, text in enumerate(RUBRICS[name], 1)],
         })
-    evalset = EvalSet.model_validate({"eval_set_id": "golden_logs", "name": "Golden logs",
+    evalset = EvalSet.model_validate({"eval_set_id": "golden-logs", "name": "Golden logs",
                                       "description": "Synthetic logs with known diagnoses.", "eval_cases": cases})
     EVALSET.write_text(json.dumps(evalset.model_dump(mode="json", exclude_none=True), indent=2) + "\n", encoding="utf-8")
 

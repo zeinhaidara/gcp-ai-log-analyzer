@@ -50,7 +50,7 @@ flowchart TB
   Firewall -->|private.googleapis.com| APIs["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
 ```
 
-Private DNS zone `log-analyzer-dev-googleapis` resolves Google API names to `private.googleapis.com`. No NAT or VPC connector is used. IAM controls data access; this is not a VPC Service Controls perimeter. Provisioned by `infra/Configure-Network.ps1`.
+Private DNS zone `log-analyzer-dev-googleapis` resolves Google API names to `private.googleapis.com`. No NAT or VPC connector is used. IAM controls data access; this is not a VPC Service Controls perimeter. Provisioned by `infra/configure-network.ps1`.
 
 ## Layout
 
@@ -60,9 +60,9 @@ static/                     dashboard UI and demo logs
 tests/                      dashboard tests
 requirements.txt, Dockerfile
 agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
-                            Deploy-Agent.ps1 (one-time bootstrap), Smoke-Test*.ps1 (live checks)
+                            deploy-agent.ps1 (one-time bootstrap), smoke-test*.ps1 (live checks)
 evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
-infra/                      Configure-Network.ps1, Analytics-VPC-handoff.md, terraform/ (notes, not applied)
+infra/                      configure-network.ps1, analytics-vpc-handoff.md, terraform/ (notes, not applied)
 cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
 ```
 
@@ -93,7 +93,7 @@ Four synthetic logs in `evals/fixtures/` each have an `.expected.json` with a mi
 
 ```
 python evals/golden_logs.py --threshold 0.8
-adk eval evals/adk/log_investigator evals/adk/golden_logs.evalset.json --config_file_path evals/adk/eval_config.json
+adk eval evals/adk/log_investigator evals/adk/golden-logs.evalset.json --config_file_path evals/adk/eval-config.json
 ```
 
 `golden_logs.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/golden_logs.py --write-adk-evalset`. Neither eval runs in CI yet.
@@ -129,7 +129,7 @@ Project `ai-log-analyzer-511017`, region `us-central1`.
 | Pub/Sub topic | `log-analyzer-dev-investigations` |
 | BigQuery | `ai-log-analyzer-511017.log_analyzer_dev.incidents`, partitions expire after 7 days |
 
-Terraform state: bucket `ai-log-analyzer-511017-tfstate`, prefix `dev`. Nothing is applied yet; planned changes are in [infra/terraform](infra/terraform/README.md). Details: [agent](agent_service/README.md), [analytics and VPC](infra/Analytics-VPC-handoff.md).
+Terraform state: bucket `ai-log-analyzer-511017-tfstate`, prefix `dev`. Nothing is applied yet; planned changes are in [infra/terraform](infra/terraform/README.md). Details: [agent](agent_service/README.md), [analytics and VPC](infra/analytics-vpc-handoff.md).
 
 ## Known gaps
 

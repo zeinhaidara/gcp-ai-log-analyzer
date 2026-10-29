@@ -4,6 +4,12 @@ A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then
 
 ## Incident Time Machine
 
+Home offers **Open a log** and **Try a demo**, followed by your three most recent logs.
+Use **Saved logs** to search the full recent library, or **Reports** for seven-day totals.
+Within a replay, the service map and timeline stay visible; expand **Event trail** or
+**Explore the evidence** when you need more detail. Saved cases support `#case={UUID}`
+links, and browser navigation returns to Home, Saved logs or Reports.
+
 Upload UTF-8 `.txt`, `.log` or `.jsonl` files, or open a saved log to reconstruct an incident, scrub its timeline, replay service signals,
 and jump to the first recorded fault or an explicit recovery. Filter by request/trace ID,
 select a service to inspect its event trail, and follow source references into the numbered

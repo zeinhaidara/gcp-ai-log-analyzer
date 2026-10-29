@@ -61,7 +61,7 @@ tests/                      dashboard tests
 requirements.txt, Dockerfile
 agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
                             Deploy-Agent.ps1 (one-time bootstrap), Smoke-Test*.ps1 (live checks)
-evals/                      golden-log eval: fixtures/, run_eval.py, test_score.py, adk/
+evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
 infra/                      Configure-Network.ps1, Analytics-VPC-handoff.md, terraform/ (notes, not applied)
 cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
 ```
@@ -92,11 +92,11 @@ Security checks, as CI runs them: `bandit -q app.py storage.py analytics.py inve
 Four synthetic logs in `evals/fixtures/` each have an `.expected.json` with a minimum (and optional maximum) severity and keywords the summary or likely cause must mention. These calls reach Vertex AI and cost money. They need the agent dependencies and `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
 
 ```
-python evals/run_eval.py --threshold 0.8
+python evals/golden_logs.py --threshold 0.8
 adk eval evals/adk/log_investigator evals/adk/golden_logs.evalset.json --config_file_path evals/adk/eval_config.json
 ```
 
-`run_eval.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/adk/build_evalset.py`. Neither eval runs in CI yet.
+`golden_logs.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/golden_logs.py --write-adk-evalset`. Neither eval runs in CI yet.
 
 ## Endpoints
 

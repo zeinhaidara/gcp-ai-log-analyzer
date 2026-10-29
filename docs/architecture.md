@@ -37,6 +37,6 @@ flowchart TB
   Firewall -->|private.googleapis.com| APIs["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
 ```
 
-Private DNS zone `log-analyzer-dev-googleapis` resolves Google API names to `private.googleapis.com`. No NAT or VPC connector is used. IAM controls data access; this is not a VPC Service Controls perimeter. Provisioned by `infra/configure-network.ps1`.
+Private DNS zone `log-analyzer-dev-googleapis` resolves Google API names to `private.googleapis.com`. No NAT or VPC connector is used. IAM controls data access; this is not a VPC Service Controls perimeter. Provisioned by `infra/scripts/configure-network.ps1`.
 
 Details: [analytics and VPC handoff](analytics-vpc-handoff.md), [planned ingress change](../infra/terraform/README.md).

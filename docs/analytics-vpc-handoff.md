@@ -72,7 +72,7 @@ inside this subnet. IAM still controls their access. This is not a VPC Service C
 perimeter. No NAT, VPC connector, VM or load balancer is provisioned.
 Cloud DNS and service usage can incur charges. Direct VPC cold starts can delay egress.
 
-Provision with `infra/configure-network.ps1`; add `-AttachServices` only when attaching
+Provision with `infra/scripts/configure-network.ps1`; add `-AttachServices` only when attaching
 existing revisions without an application deployment. It creates missing resources
 and updates DNS records. Existing firewall/route definitions must be checked for drift.
 

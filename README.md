@@ -29,7 +29,7 @@ requirements.txt, Dockerfile
 agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
                             deploy-agent.ps1 (one-time bootstrap), smoke-test*.ps1 (live checks)
 evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
-infra/                      configure-network.ps1, terraform/ (notes, not applied)
+infra/                      scripts/configure-network.ps1, terraform/ (notes, not applied)
 docs/                       architecture.md, api.md, analytics-vpc-handoff.md
 cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
 ```

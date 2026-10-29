@@ -1,47 +1,42 @@
-import json
 import unittest
-from unittest.mock import Mock, patch
-from investigations import GCPInvestigations, InvestigationNotFound, InvestigationUnavailable
+from unittest.mock import Mock
+
+from investigations import InvestigationNotFound, InvestigationUnavailable, StoreInvestigations
+from storage import StorageUnavailable
 
 
 class InvestigationTests(unittest.TestCase):
     def setUp(self):
-        self.db, self.publisher = Mock(), Mock()
-        self.logs, self.results = Mock(), Mock()
-        self.db.collection.side_effect = lambda name: self.logs if name == "logs" else self.results
-        self.upload = self.logs.document.return_value.get.return_value
-        self.upload.exists = True
-        self.upload.to_dict.return_value = {}
-        self.result = self.results.document.return_value.get.return_value
-        self.result.exists = False
-        self.control = GCPInvestigations("project", "topic", "(default)", "logs", self.db, self.publisher)
+        self.store = Mock()
+        self.store.investigation.return_value = {"status": "waiting"}
+        self.store.enqueue.return_value = {"status": "queued"}
+        self.control = StoreInvestigations(self.store)
 
-    def test_publish_uses_saved_id_and_records_queue_state(self):
+    def test_queue_publishes_saved_id(self):
         self.assertEqual(self.control.queue("saved-id"), {"status": "queued"})
-        data = self.publisher.publish.call_args.args[1]
-        self.assertEqual(json.loads(data), {"log_id": "saved-id"})
-        self.publisher.publish.return_value.result.assert_called_once_with(timeout=10)
-        self.logs.document.return_value.update.assert_called_once_with({"investigation_dispatch": "queued"}, timeout=10, retry=None)
+        self.store.enqueue.assert_called_once_with("saved-id")
 
-    def test_publish_failure_marks_saved_log_for_retry(self):
-        self.publisher.publish.return_value.result.side_effect = TimeoutError("private details")
-        with self.assertRaises(InvestigationUnavailable):
-            self.control.queue("saved-id")
-        self.logs.document.return_value.update.assert_called_once_with({"investigation_dispatch": "dispatch_failed"}, timeout=10, retry=None)
-
-    def test_completed_or_queued_requests_do_not_republish(self):
-        for status in ("completed", "processing", "queued"):
-            with patch.object(self.control, "get", return_value={"status": status}):
-                self.assertEqual(self.control.queue("saved-id")["status"], status)
-        self.publisher.publish.assert_not_called()
+    def test_active_or_disabled_investigations_do_not_republish(self):
+        for status in ("completed", "processing", "queued", "disabled"):
+            self.store.investigation.return_value = {"status": status}
+            self.assertEqual(self.control.queue("saved-id")["status"], status)
+        self.store.enqueue.assert_not_called()
 
     def test_missing_log_is_not_published(self):
-        self.upload.exists = False
+        self.store.investigation.return_value = None
         with self.assertRaises(InvestigationNotFound):
             self.control.queue("unknown")
-        self.publisher.publish.assert_not_called()
+        self.store.enqueue.assert_not_called()
 
-    def test_results_exclude_internal_lease_and_owner(self):
-        self.result.exists = True
-        self.result.to_dict.return_value = {"status": "completed", "findings": {"summary": "test"}, "owner": "private", "lease_until": "internal"}
-        self.assertEqual(self.control.get("saved-id"), {"status": "completed", "findings": {"summary": "test"}})
+    def test_storage_failures_become_unavailable(self):
+        self.store.investigation.side_effect = StorageUnavailable()
+        with self.assertRaises(InvestigationUnavailable):
+            self.control.get("saved-id")
+        self.store.investigation.side_effect = None
+        self.store.enqueue.side_effect = StorageUnavailable()
+        with self.assertRaises(InvestigationUnavailable):
+            self.control.queue("saved-id")
+
+
+if __name__ == "__main__":
+    unittest.main()

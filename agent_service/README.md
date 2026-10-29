@@ -77,7 +77,7 @@ References: [ADK deployment](https://google.github.io/adk-docs/deploy/cloud-run/
 
 ## Historical incident context and VPC
 
-Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../infra/analytics-vpc-handoff.md).
+Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../docs/analytics-vpc-handoff.md).
 
 ```mermaid
 flowchart LR
@@ -88,6 +88,6 @@ flowchart LR
   Access --> APIs["Storage · Firestore · BigQuery · Vertex AI"]
 ```
 
-The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../README.md#vpc-network-layer).
+The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../docs/architecture.md#network).
 
 Planned, not applied: internal-only ingress for the agent. Pub/Sub push keeps working, and the dashboard is unaffected because it only publishes to Pub/Sub. Direct developer access, including `gcloud run services proxy`, would stop. See [infra/terraform](../infra/terraform/README.md).

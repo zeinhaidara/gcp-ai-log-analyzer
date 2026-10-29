@@ -1,6 +1,6 @@
 # Analytics and VPC handoff
 
-Project `ai-log-analyzer-511017`; region `us-central1`. No Terraform is applied; planned changes are in [terraform/](terraform/README.md).
+Project `ai-log-analyzer-511017`; region `us-central1`. No Terraform is applied; planned changes are in [infra/terraform/](../infra/terraform/README.md).
 Workflow: personal branch `zein/analytics-vpc` → PR to `dev` → reviewed PR to protected `main`.
 
 ## What the app does

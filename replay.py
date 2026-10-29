@@ -126,8 +126,7 @@ def _parse(raw, line):
 def _sample(events):
     if len(events) <= MAX_EVENTS:
         return events
-    # Preserve boundaries and the earliest signal of every kind/service before
-    # uniformly sampling remaining context. Never renumber source evidence.
+    # Keep boundaries and each kind/service's first signal, then sample; never renumber.
     chosen = {0, len(events) - 1}
     seen = set()
     for index, event in enumerate(events):

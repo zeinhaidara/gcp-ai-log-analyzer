@@ -10,7 +10,7 @@ class InvestigationNotFound(Exception):
 
 
 class StoreInvestigations:
-    """Adapt dev's storage API to the feature branch's result routes."""
+    """Adapt the store's investigation API to the /logs/{id}/investigation routes."""
     def __init__(self, store):
         self.store = store
 

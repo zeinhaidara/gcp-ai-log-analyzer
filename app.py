@@ -139,7 +139,7 @@ def create_app(database=None, store=None, analytics=None, investigations=None):
         return respond(start_response, "404 Not Found", {"error": "Route not found."})
 
     def unavailable(start_response):
-        # Do not log exception text: provider errors can include sensitive data.
+        # Provider errors can contain sensitive data.
         logging.getLogger(__name__).error("Log storage operation failed")
         return respond(start_response, "503 Service Unavailable", {"error": "Log storage is temporarily unavailable. Check recent logs before retrying an upload."})
 

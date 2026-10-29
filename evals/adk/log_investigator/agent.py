@@ -1,4 +1,4 @@
-"""root_agent for `adk eval`, built from the arguments investigate() gives LlmAgent so the instruction isn't duplicated."""
+"""root_agent for `adk eval`, reusing the LlmAgent arguments from investigate()."""
 import asyncio
 import sys
 from pathlib import Path

@@ -138,7 +138,7 @@ def historical_incidents(analytics, log_id, service_name, failure_category):
         bigquery.ScalarQueryParameter("log_id", "STRING", log_id),
         bigquery.ScalarQueryParameter("service", "STRING", service_name),
         bigquery.ScalarQueryParameter("category", "STRING", failure_category)])
-    # Table identifiers cannot be parameters; strict allowlist above, values bound below.
+    # Identifiers can't be parameters, so the table is allowlisted above.
     query = f"""SELECT log_id, completed_at, severity, summary
         FROM `{table}`
         WHERE completed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
@@ -146,13 +146,13 @@ def historical_incidents(analytics, log_id, service_name, failure_category):
         AND ((@service != 'unknown' AND service_name = @service)
           OR (@category != 'unclassified' AND failure_category = @category))
         QUALIFY ROW_NUMBER() OVER (PARTITION BY log_id ORDER BY completed_at DESC) = 1
-        ORDER BY completed_at DESC LIMIT 5"""  # nosec B608 - validated identifier and bound values
+        ORDER BY completed_at DESC LIMIT 5"""  # nosec B608
     rows = analytics.query(query, job_config=config, location=os.getenv("BIGQUERY_LOCATION", "us-central1")).result(timeout=20)
     return [{"log_id": row.log_id, "severity": row.severity, "summary": row.summary[:2000]} for row in rows]
 
 
 def export_analytics(analytics, log_id, findings, completed_at, model, service_name="unknown", failure_category="unclassified"):
-    # A stable load job ID prevents duplicate rows on retries; no streaming charges.
+    # Stable job ID keeps retries from adding duplicate rows.
     row = {"log_id": log_id, "completed_at": completed_at, "severity": findings["severity"],
            "summary": findings["summary"], "model": model,
            "service_name": service_name, "failure_category": failure_category}
@@ -211,7 +211,7 @@ async def process(log_id):
         await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,
                                 {"status": "completed", "lease_until": datetime.now(timezone.utc)})
     except Exception:
-        # Retain findings so an analytics failure does not require another model call.
+        # Keep findings so a retry skips the model call.
         await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,
                                 {"status": "retrying", "lease_until": datetime.now(timezone.utc)})
         raise
@@ -239,17 +239,15 @@ READY_TIMEOUT = 2
 
 def check_firestore():
     db = clients()[0]
-    # Single-document get; the document need not exist.
+    # The document need not exist.
     db.collection(os.getenv("FIRESTORE_COLLECTION", "logs")).document("_readiness").get(timeout=READY_TIMEOUT, retry=None)
 
 
 def check_storage():
-    # Metadata read, no listing.
     clients()[1].bucket(os.environ["LOG_BUCKET"]).reload(timeout=READY_TIMEOUT, retry=None)
 
 
 def check_bigquery():
-    # Metadata read, no query job.
     clients()[2].get_table(os.environ["BIGQUERY_TABLE"], timeout=READY_TIMEOUT, retry=None)
 
 
@@ -258,7 +256,7 @@ async def run_check(name, check):
         await asyncio.wait_for(asyncio.to_thread(check), timeout=READY_TIMEOUT)
         return name, "ok"
     except Exception:
-        # Detail stays in the server log.
+        # Never return exception text.
         logging.warning("Readiness check failed: %s", name, exc_info=True)
         return name, "failed"
 

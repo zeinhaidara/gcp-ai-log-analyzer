@@ -59,6 +59,7 @@ Security checks, as CI runs them: from `dashboard`, `bandit -q app.py storage.py
 Four synthetic logs in `evals/fixtures/` each have an `.expected.json` with a minimum (and optional maximum) severity and keywords the summary or likely cause must mention. These calls reach Vertex AI and cost money. They need the agent dependencies and `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
 
 ```
+pip install -r evals/requirements.txt
 python evals/golden_logs.py --threshold 0.8
 adk eval evals/adk/log_investigator evals/adk/golden-logs.evalset.json --config_file_path evals/adk/eval-config.json
 ```

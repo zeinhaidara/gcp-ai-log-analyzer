@@ -6,3 +6,6 @@ __pycache__/
 *.tar
 .tools/
 .instruction/
+.terraform/
+*.tfstate
+*.tfstate.backup

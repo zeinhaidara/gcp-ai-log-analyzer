@@ -5,13 +5,14 @@ steps:
 - id: check-interface
   name: node:22-alpine
   entrypoint: sh
-  args: [-ec, 'node --check static/app.js && node --check static/replay.js']
+  args: [-ec, 'node --check dashboard/static/app.js && node --check dashboard/static/replay.js']
 - id: test-dashboard
   name: python:3.12-slim
   entrypoint: sh
   args:
   - -ec
   - |
+    cd dashboard
     pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
     python -m unittest discover -s tests -v
     bandit -q app.py storage.py analytics.py investigations.py replay.py
@@ -26,14 +27,15 @@ steps:
     pip install -r requirements.txt bandit==1.9.4 pip-audit==2.10.1
     python -m unittest discover -s tests -v
     bandit -q service.py
-    pip-audit -r requirements.txt --progress-spinner off
+    # CVE-2026-114603 is a CPU DoS in opentelemetry-api's inbound tracestate header parser, which the agent never calls; remove when google-adk allows opentelemetry-api>=1.45.1
+    pip-audit -r requirements.txt --progress-spinner off --ignore-vuln CVE-2026-114603
 - id: build-images
   name: gcr.io/cloud-builders/docker
   entrypoint: sh
   args:
   - -ec
   - |
-    docker build -t log-analyzer-ci .
+    docker build -t log-analyzer-ci dashboard
     docker build -t adk-agent-ci agent_service
     docker save -o /workspace/dashboard.tar log-analyzer-ci
     docker save -o /workspace/agent.tar adk-agent-ci

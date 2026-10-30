@@ -27,7 +27,7 @@ def incident_analytics():
         try:
             client = bigquery.Client(project=os.environ["GOOGLE_CLOUD_PROJECT"])
             config = bigquery.QueryJobConfig(maximum_bytes_billed=52428800)
-            # BigQuery cannot parameterize identifiers; table passed the strict allowlist above.
+            # Identifiers can't be parameters, so the table is allowlisted above.
             query = f"""SELECT DATE(completed_at) AS day, severity,
                 COALESCE(service_name, 'unknown') AS service_name,
                 COALESCE(failure_category, 'unclassified') AS failure_category,
@@ -35,7 +35,7 @@ def incident_analytics():
                 FROM `{table}`
                 WHERE completed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
                 GROUP BY day, severity, service_name, failure_category
-                ORDER BY day"""  # nosec B608 - validated configuration identifier; no user SQL
+                ORDER BY day"""  # nosec B608
             rows = client.query(query, job_config=config, location=os.getenv("BIGQUERY_LOCATION", "us-central1")).result(timeout=20)
             daily, severity, categories, services = defaultdict(int), defaultdict(int), defaultdict(int), defaultdict(int)
             for row in rows:
@@ -52,7 +52,7 @@ def incident_analytics():
             return _cached
         except (GoogleAPICallError, GoogleAuthError, TimeoutError):
             logging.error("Incident reporting query unavailable")
-            # Cache failures too, so public refresh requests do not repeatedly submit jobs.
+            # Cache failures too, so public refreshes can't flood BigQuery with jobs.
             _cached = {"enabled": False, "message": "Incident reporting is temporarily unavailable."}
             _expires = time.monotonic() + 60
             return _cached

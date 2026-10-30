@@ -5,12 +5,13 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig
 from google.adk.runners import Runner
@@ -54,11 +55,26 @@ def grounded_findings(result, content):
     return findings
 
 
-@lru_cache
+class Clients(NamedTuple):
+    db: firestore.Client
+    objects: storage.Client
+    analytics: bigquery.Client
+
+
+_clients = None
+_clients_lock = threading.Lock()
+
+
 def clients():
-    project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    return (firestore.Client(project=project, database=os.getenv("FIRESTORE_DATABASE", "(default)")),
-            storage.Client(project=project), bigquery.Client(project=project))
+    global _clients
+    if _clients is None:
+        with _clients_lock:
+            if _clients is None:
+                project = os.environ["GOOGLE_CLOUD_PROJECT"]
+                _clients = Clients(
+                    firestore.Client(project=project, database=os.getenv("FIRESTORE_DATABASE", "(default)")),
+                    storage.Client(project=project), bigquery.Client(project=project))
+    return _clients
 
 
 async def investigate(content, history=None):
@@ -137,7 +153,7 @@ def historical_incidents(analytics, log_id, service_name, failure_category):
         bigquery.ScalarQueryParameter("log_id", "STRING", log_id),
         bigquery.ScalarQueryParameter("service", "STRING", service_name),
         bigquery.ScalarQueryParameter("category", "STRING", failure_category)])
-    # Table identifiers cannot be parameters; strict allowlist above, values bound below.
+    # Identifiers can't be parameters, so the table is allowlisted above.
     query = f"""SELECT log_id, completed_at, severity, summary
         FROM `{table}`
         WHERE completed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
@@ -145,13 +161,13 @@ def historical_incidents(analytics, log_id, service_name, failure_category):
         AND ((@service != 'unknown' AND service_name = @service)
           OR (@category != 'unclassified' AND failure_category = @category))
         QUALIFY ROW_NUMBER() OVER (PARTITION BY log_id ORDER BY completed_at DESC) = 1
-        ORDER BY completed_at DESC LIMIT 5"""  # nosec B608 - validated identifier and bound values
+        ORDER BY completed_at DESC LIMIT 5"""  # nosec B608
     rows = analytics.query(query, job_config=config, location=os.getenv("BIGQUERY_LOCATION", "us-central1")).result(timeout=20)
     return [{"log_id": row.log_id, "severity": row.severity, "summary": row.summary[:2000]} for row in rows]
 
 
 def export_analytics(analytics, log_id, findings, completed_at, model, service_name="unknown", failure_category="unclassified"):
-    # A stable load job ID prevents duplicate rows on retries; no streaming charges.
+    # Stable job ID keeps retries from adding duplicate rows.
     row = {"log_id": log_id, "completed_at": completed_at, "severity": findings["severity"],
            "summary": findings["summary"], "model": model,
            "service_name": service_name, "failure_category": failure_category}
@@ -210,7 +226,7 @@ async def process(log_id):
         await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,
                                 {"status": "completed", "lease_until": datetime.now(timezone.utc)})
     except Exception:
-        # Retain findings so an analytics failure does not require another model call.
+        # Keep findings so a retry skips the model call.
         await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,
                                 {"status": "retrying", "lease_until": datetime.now(timezone.utc)})
         raise
@@ -229,7 +245,46 @@ def parse_message(envelope):
 
 @app.get("/health")
 async def health():
+    # No cloud calls.
     return {"status": "ok", "service": "adk-agent"}
+
+
+READY_TIMEOUT = 2
+
+
+def check_firestore():
+    db = clients().db
+    # The document need not exist.
+    db.collection(os.getenv("FIRESTORE_COLLECTION", "logs")).document("_readiness").get(timeout=READY_TIMEOUT, retry=None)
+
+
+def check_storage():
+    clients().objects.bucket(os.environ["LOG_BUCKET"]).reload(timeout=READY_TIMEOUT, retry=None)
+
+
+def check_bigquery():
+    clients().analytics.get_table(os.environ["BIGQUERY_TABLE"], timeout=READY_TIMEOUT, retry=None)
+
+
+async def run_check(name, check):
+    try:
+        await asyncio.wait_for(asyncio.to_thread(check), timeout=READY_TIMEOUT)
+        return name, "ok"
+    except Exception:
+        # Never return exception text.
+        logging.warning("Readiness check failed: %s", name, exc_info=True)
+        return name, "failed"
+
+
+@app.get("/ready")
+async def ready():
+    checks = dict(await asyncio.gather(
+        run_check("firestore", check_firestore),
+        run_check("storage", check_storage),
+        run_check("bigquery", check_bigquery)))
+    if all(result == "ok" for result in checks.values()):
+        return {"status": "ready", "checks": checks}
+    return JSONResponse(status_code=503, content={"status": "not_ready", "checks": checks})
 
 
 @app.post("/pubsub")

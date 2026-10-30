@@ -148,7 +148,7 @@ import {
 
 import {
   to = google_project_iam_member.agent_datastore_user
-  id = "${var.project_id} roles/datastore.user serviceAccount:${local.agent_sa}@${var.project_id}.iam.gserviceaccount.com"
+  id = "${var.project_id} roles/datastore.user serviceAccount:${local.agent_sa}@${var.project_id}.iam.gserviceaccount.com agent-default-firestore"
 }
 
 import {

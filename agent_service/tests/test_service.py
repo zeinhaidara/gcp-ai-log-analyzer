@@ -58,12 +58,80 @@ class HandlerTests(unittest.TestCase):
         blob.size = 100
         blob.download_as_bytes.return_value = b"INFO orders started\nERROR database timeout"
         findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
-        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", side_effect=TimeoutError()), patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned") as save, patch.object(service, "export_analytics") as export, patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", side_effect=TimeoutError()), patch.object(service, "cached_diagnosis", return_value=None), patch.object(service, "cache_diagnosis"), patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned") as save, patch.object(service, "export_analytics") as export, patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
             asyncio.run(service.process(LOG_ID))
         model.assert_awaited_once_with("INFO orders started\nERROR database timeout", [])
         self.assertFalse(save.call_args_list[0].args[-1]["history_available"])
         self.assertEqual(save.call_args_list[-1].args[-1]["status"], "completed")
         export.assert_called_once()
+
+    def cache_setup(self):
+        """db/objects/analytics mocks wired for one process() run."""
+        db, objects, analytics = Mock(), Mock(), Mock()
+        blob = objects.bucket.return_value.blob.return_value
+        blob.size = 100
+        blob.download_as_bytes.return_value = b"INFO orders started\nERROR database timed out"
+        return db, objects, analytics
+
+    def test_cache_miss_calls_the_model_and_writes_the_cache(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[]), patch.object(service, "cached_diagnosis", return_value=None), patch.object(service, "cache_diagnosis") as cache_write, patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned"), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        model.assert_awaited_once()
+        cache_write.assert_called_once()
+        self.assertEqual(cache_write.call_args.args[-1], findings)
+
+    def test_cache_hit_returns_cached_findings_and_skips_the_model(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        cached = {"severity": "error", "summary": "Cached", "likely_cause": "Known", "recommendations": []}
+        captured = {}
+        def save_if_owned(transaction, ref, owner, values):
+            captured.update(values)
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[]), patch.object(service, "cached_diagnosis", return_value=cached), patch.object(service, "cache_diagnosis") as cache_write, patch.object(service, "investigate", new=AsyncMock()) as model, patch.object(service, "save_if_owned", side_effect=save_if_owned), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        model.assert_not_awaited()
+        cache_write.assert_not_called()
+        self.assertEqual(captured["findings"], cached)
+
+    def test_expired_cache_entry_is_treated_as_a_miss(self):
+        from datetime import datetime, timedelta, timezone
+        db = Mock()
+        doc = Mock(exists=True)
+        doc.to_dict.return_value = {"findings": {"severity": "error"}, "expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)}
+        db.collection.return_value.document.return_value.get.return_value = doc
+        self.assertIsNone(service.cached_diagnosis(db, "a-key"))
+
+    def test_cache_key_changes_with_model_or_prompt_version(self):
+        with patch.object(service, "MODEL", "model-a"), patch.object(service, "PROMPT_VERSION", "1"):
+            base = service.diagnosis_cache_key("same log")
+        with patch.object(service, "MODEL", "model-b"), patch.object(service, "PROMPT_VERSION", "1"):
+            different_model = service.diagnosis_cache_key("same log")
+        with patch.object(service, "MODEL", "model-a"), patch.object(service, "PROMPT_VERSION", "2"):
+            different_version = service.diagnosis_cache_key("same log")
+        self.assertNotEqual(base, different_model)
+        self.assertNotEqual(base, different_version)
+        self.assertNotEqual(different_model, different_version)
+
+    def test_failed_or_invalid_model_output_is_not_cached(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[]), patch.object(service, "cached_diagnosis", return_value=None), patch.object(service, "cache_diagnosis") as cache_write, patch.object(service, "investigate", new=AsyncMock(side_effect=RuntimeError("no structured findings"))), patch.object(service, "save_if_owned"), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(service.process(LOG_ID))
+        cache_write.assert_not_called()
+
+    def test_non_empty_history_bypasses_the_cache(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[{"log_id": "prior", "severity": "error", "summary": "x"}]), patch.object(service, "cached_diagnosis") as cache_read, patch.object(service, "cache_diagnosis") as cache_write, patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned"), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        cache_read.assert_not_called()
+        cache_write.assert_not_called()
+        model.assert_awaited_once()
 
     def test_history_query_is_parameterized_bounded_and_truncated(self):
         from types import SimpleNamespace

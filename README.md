@@ -7,10 +7,6 @@ Upload a synthetic log, replay the incident it records, and review a Gemini inve
 
 Findings are tentative suggestions. Use synthetic logs without credentials.
 
-## Open the app
-
-Open the public [Incident Desk dashboard](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app). Upload a synthetic log, then review its progress and AI findings. The separate agent URL remains authenticated and returns 403 to anonymous requests.
-
 ## Incident replay
 
 Upload UTF-8 `.txt`, `.log` or `.jsonl` files (up to 1 MiB), or try one of three built-in scenarios (retry storm, token expiry, payment recovery). Previewing a scenario saves nothing and calls no model.

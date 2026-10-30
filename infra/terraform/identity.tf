@@ -109,6 +109,12 @@ resource "google_storage_bucket_iam_member" "agent_object_viewer" {
   role   = "roles/storage.objectViewer"
 }
 
+resource "google_storage_bucket_iam_member" "agent_bucket_metadata_reader" {
+  bucket = "b/ai-log-analyzer-511017-raw-logs-dev"
+  member = "serviceAccount:log-analyzer-dev-agent@ai-log-analyzer-511017.iam.gserviceaccount.com"
+  role   = "roles/storage.legacyBucketReader"
+}
+
 resource "google_storage_bucket_iam_member" "dashboard_object_user" {
   bucket = "b/ai-log-analyzer-511017-raw-logs-dev"
   member = "serviceAccount:log-analyzer-dev-dashboard@ai-log-analyzer-511017.iam.gserviceaccount.com"

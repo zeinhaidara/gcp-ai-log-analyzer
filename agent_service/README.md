@@ -21,9 +21,9 @@ flowchart LR
 
 ## Automatic deployment
 
-The root `cloudbuild-ci.yaml` validates both services on PRs into `dev` or `main`. The root `cloudbuild.yaml` publishes scanned images and deploys both services on pushes to `dev`, using the existing build identity. The agent deploys first; the dashboard deploys second. Model, identities and resource settings are substitutions in that YAML. No new pipeline folders or infrastructure provisioning steps are needed.
+`cloudbuild/pr-validation.yaml` validates both services on PRs into `dev` or `main`. `cloudbuild/deploy-dev.yaml` publishes scanned images and deploys both services on pushes to `dev`, using the existing build identity. The agent deploys first; the dashboard deploys second. Model, identities and resource settings are substitutions in that YAML.
 
-`Deploy-Agent.ps1` is the original one-time bootstrap script; routine releases use Cloud Build and do not rerun its IAM/table/subscription setup.
+`deploy-agent.ps1` is the original one-time bootstrap script; routine releases use Cloud Build and do not rerun its IAM/table/subscription setup.
 
 | Setting | Value |
 |---|---|
@@ -53,15 +53,15 @@ After successfully storing `logs/{UUID}.txt` and its `logs/{UUID}` Firestore doc
 
 The dashboard publishes through the Pub/Sub REST API using its attached runtime identity. Publish failures keep the saved log ID; `POST /investigations/{log_id}` retries without another upload. `GET /investigations/{log_id}` returns status/findings without downloading raw content on each poll. No investigation document exists until the message reaches the agent.
 
-To verify automatic upload-to-findings integration, run `Smoke-Test.ps1` without `-LogId`; it uploads one synthetic log and waits for the result and one BigQuery row. It does not manually publish after an automatic upload.
+To verify automatic upload-to-findings integration, run `smoke-test.ps1` without `-LogId`; it uploads one synthetic log and waits for the result and one BigQuery row. It does not manually publish after an automatic upload.
 
 For an existing uploaded log, manually start an investigation:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\Smoke-Test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
+powershell.exe -ExecutionPolicy Bypass -File .\smoke-test.ps1 -LogId REPLACE_WITH_UPLOADED_LOG_UUID
 ```
 
-Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
+Completed Firestore documents contain `findings` (severity, summary, likely_cause, recommendations, hypotheses with cited line numbers), `model`, `completed_at`, `truncated`, `service_name`, `failure_category`, `history_count` and `history_available`. BigQuery contains log_id, completed_at, severity, summary, model, service_name and failure_category. Raw content stays in Cloud Storage.
 
 ## Limits and recovery
 
@@ -70,14 +70,14 @@ Completed Firestore documents contain `findings` (severity, summary, likely_caus
 - A Firestore lease prevents concurrent normal deliveries for the same log. Completed deliveries skip the model and analytics. Findings are saved before analytics so analytics retries reuse them. A crash after model response but before saving findings can repeat a paid call.
 - BigQuery uses deterministic job IDs to suppress retry duplicates while BigQuery retains the job. This is not a permanent exactly-once guarantee. A terminal failed load job requires operator repair and a new job ID; repeated delivery alone will not fix that failed job.
 - Incidents are partitioned by completed_at, partitions expire after seven days, and the table itself does not expire. Firestore and raw logs have no automatic retention cleanup yet.
-- Errors return HTTP 503 for Pub/Sub retry, then the existing DLQ after approximately five attempts. Invalid messages return 400 and also reach retry/DLQ. Health checks do not verify backend access.
+- Errors return HTTP 503 for Pub/Sub retry, then the existing DLQ after approximately five attempts. Invalid messages return 400 and also reach retry/DLQ. `GET /health` is liveness and makes no cloud calls. `GET /ready` checks Firestore, Cloud Storage and BigQuery (2-second timeout each) and returns 200 or 503 with `ok`/`failed` per check. It costs one Firestore read per probe and needs `storage.buckets.get`.
 - Results are AI suggestions requiring review. Avoid uploading real credentials or sensitive logs; logs are sent to the configured Google model.
 
 References: [ADK deployment](https://google.github.io/adk-docs/deploy/cloud-run/), [model lifecycle](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions), [BigQuery load jobs](https://docs.cloud.google.com/bigquery/docs/loading-data-local), [Pub/Sub authenticated push](https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions).
 
 ## Historical incident context and VPC
 
-Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../infra/Analytics-VPC-handoff.md).
+Before investigating, the agent reads up to five recent matching BigQuery incidents through a fixed, parameterized query. Firestore findings expose the history count and classification through both dashboard API routes. Cloud Build preserves private VPC egress for the agent and dashboard. See [the infrastructure handoff](../docs/analytics-vpc-handoff.md).
 
 ```mermaid
 flowchart LR
@@ -88,4 +88,6 @@ flowchart LR
   Access --> APIs["Storage · Firestore · BigQuery · Vertex AI"]
 ```
 
-The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../README.md#vpc-network-layer).
+The subnet belongs to `log-analyzer-dev-vpc` in `us-central1`. Private DNS and routing send Google API calls to `199.36.153.8/30`. The agent's inbound URL requires IAM; its VPC connection controls outbound calls. The managed data and AI services are outside the subnet. See the [full network-layer diagram](../docs/architecture.md#network).
+
+Planned, not applied: internal-only ingress for the agent. Pub/Sub push keeps working, and the dashboard is unaffected because it only publishes to Pub/Sub. Direct developer access, including `gcloud run services proxy`, would stop. See [infra/terraform](../infra/terraform/README.md).

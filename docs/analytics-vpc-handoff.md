@@ -1,6 +1,6 @@
 # Analytics and VPC handoff
 
-Project `ai-log-analyzer-511017`; region `us-central1`. No Terraform.
+Project `ai-log-analyzer-511017`; region `us-central1`. No Terraform is applied; planned changes are in [infra/terraform/](../infra/terraform/README.md).
 Workflow: personal branch `zein/analytics-vpc` → PR to `dev` → reviewed PR to protected `main`.
 
 ## What the app does
@@ -46,7 +46,7 @@ flowchart LR
 The dashboard publishes automatically after durable storage, and its API exposes
 queued, processing, retrying and completed status with findings. Both `/investigations/{UUID}` and `/logs/{UUID}/investigation` support status and retry. The UI polls the selected
 log and displays severity, summary, possible cause, recommendations and history count.
-Use `agent_service/Smoke-Test-App.ps1` to verify the automatic flow.
+Use `agent_service/smoke-test-app.ps1` to verify the automatic flow.
 The analytics page counts completed investigations, not every uploaded file.
 
 ## Network
@@ -72,7 +72,7 @@ inside this subnet. IAM still controls their access. This is not a VPC Service C
 perimeter. No NAT, VPC connector, VM or load balancer is provisioned.
 Cloud DNS and service usage can incur charges. Direct VPC cold starts can delay egress.
 
-Provision with `infra/Configure-Network.ps1`; add `-AttachServices` only when attaching
+Provision with `infra/scripts/configure-network.ps1`; add `-AttachServices` only when attaching
 existing revisions without an application deployment. It creates missing resources
 and updates DNS records. Existing firewall/route definitions must be checked for drift.
 
@@ -89,7 +89,7 @@ BigQuery data access are required.
 
 ## CI/CD settings for Mahmoud
 
-`cloudbuild.yaml` now preserves Direct VPC settings and passes the BigQuery environment.
+`cloudbuild/deploy-dev.yaml` now preserves Direct VPC settings and passes the BigQuery environment.
 Keep the existing release service account, security gates and immutable build-ID image
 tags. Both YAML files include `analytics.py` in Bandit scanning.
 
@@ -108,8 +108,8 @@ New trigger substitutions (resource names, not secrets):
 
 The dashboard environment also needs `BIGQUERY_LOCATION=us-central1` and
 `INVESTIGATION_TOPIC=log-analyzer-dev-investigations`; both are passed by Cloud Build.
-Agent deployments use `agent_service/Deploy-Agent.ps1 -Tag UNIQUE_TAG`:
-it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
+Routine agent releases go through `cloudbuild/deploy-dev.yaml`. `agent_service/deploy-agent.ps1 -Tag UNIQUE_TAG` is the
+one-time bootstrap: it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
 Both pipeline files now test, audit, build and scan the dashboard and agent independently.
 The dev release deploys the private agent before the public dashboard using the same build ID.
 

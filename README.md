@@ -1,142 +1,110 @@
 # GCP AI Log Analyzer
-https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app/
-A small learning app: upload a synthetic `.txt` log, see ERROR/WARN counts, then review the agent's Gemini findings.
 
-## Deployment flow
+Upload a synthetic log, replay the incident it records, and review a Gemini investigation of it.
 
-```mermaid
-flowchart LR
-  GitHub[GitHub dev branch] --> Build[Cloud Build]
-  Build --> Checks[Tests and security scans]
-  Checks --> Registry[Artifact Registry]
-  Checks -->|deploy agent then dashboard| Run[Cloud Run services]
-  Registry -->|scanned images| Run
-```
+- **Dashboard** (public Cloud Run service `log-analyzer-dev`): uploads, ERROR/WARN counts, incident replay, seven-day reports.
+- **Agent** (private Cloud Run service `log-analyzer-dev-agent`): receives a log ID from Pub/Sub, makes one Gemini call through ADK, and saves structured findings.
 
-Artifact Registry stores the two container images. Cloud Run runs the dashboard and the private ADK processing service. A merge into `dev` triggers deployment; promotion into `main` does not create a separate production deployment.
-
-## Application data flow
-
-```mermaid
-flowchart TB
-  User[User uploads txt log] --> Dashboard[Cloud Run dashboard and API]
-  Dashboard -->|raw file| Storage[Cloud Storage]
-  Dashboard -->|metadata and counts| Logs[Firestore logs]
-  Dashboard -->|saved log ID| Topic[Pub/Sub]
-  Topic -->|authenticated push| Agent[Private Cloud Run ADK agent]
-  Storage -->|retrieve raw file| Agent
-  Agent -->|status and AI findings| Findings[Firestore investigations]
-  Findings -->|API polling| Dashboard
-  Agent -->|incident summary| BQ[BigQuery incidents]
-  BQ -->|seven-day reporting| Dashboard
-  Dashboard -->|findings and reports| User
-```
-
-The dashboard saves the file and metadata before queuing its ID. **Cloud Storage** holds the actual log; **Firestore** holds metadata, investigation status and detailed findings. **BigQuery** holds incident summaries for reports and historical context. Reports count completed investigations and refresh at most once per minute.
-
-## AI investigation flow
-
-```mermaid
-flowchart TB
-  Request[Pub/Sub log ID] --> Agent[ADK agent on Cloud Run]
-  Storage[Cloud Storage raw log] -->|current log| Agent
-  BQ[BigQuery past incidents] -->|up to five recent matches| Agent
-  Agent -->|log and historical context| Gemini[Gemini on Vertex AI]
-  Gemini -->|structured findings| Agent
-  Agent -->|detailed findings| Firestore[Firestore investigations]
-  Agent -->|new incident summary| BQ
-  Firestore -->|dashboard API| User[User reviews suggestions]
-```
-
-ADK is the agent framework; Gemini is the model accessed through Vertex AI. Application code retrieves the log and queries recent history before one model call. The model does not run SQL or write cloud resources. If history lookup fails, the investigation continues using the current log. Findings include severity, summary, a tentative cause and suggested next steps.
-
-## VPC network layer
-
-```mermaid
-flowchart TB
-  User[User browser] -->|public HTTPS| Dashboard[Cloud Run dashboard]
-  Agent[Private Cloud Run ADK agent]
-  Dashboard -->|Direct VPC egress| Subnet
-  Agent -->|Direct VPC egress| Subnet
-  subgraph VPC[log-analyzer-dev-vpc]
-    Subnet["Subnet: 10.42.0.0/24 · us-central1"]
-    Firewall["Egress firewall: allow API HTTPS"]
-    Access[Private Google Access]
-    DNS[Private Google API DNS]
-    Subnet --> Firewall --> Access
-    DNS -.->|resolves API names| Access
-  end
-  Access -->|private.googleapis.com| APIs[Google managed APIs]
-  APIs --> Services["Storage · Firestore · BigQuery · Pub/Sub · Vertex AI"]
-```
-
-Both Cloud Run services send all outbound traffic through `log-analyzer-dev-subnet`. Private DNS resolves Google API names to `199.36.153.8/30`; a route and firewall allow HTTPS to those addresses and deny other IPv4 egress for the app's network tag. No NAT or VPC connector is used.
-
-The dashboard keeps its public HTTPS entry point. Pub/Sub invokes the agent through its authenticated Cloud Run URL. The VPC controls outbound connectivity; service-account IAM controls data access. Storage, Firestore, BigQuery, Pub/Sub and Vertex AI remain managed services outside the subnet. This configuration does not create a VPC Service Controls perimeter.
-
-## Two pipeline files
-
-| File | Automatic event | What happens |
-| --- | --- | --- |
-| `cloudbuild-ci.yaml` | Open/update a PR targeting `dev` or `main` | Test and audit both apps; build and scan both containers |
-| `cloudbuild.yaml` | Push or merge into `dev` | Same checks, then publish both images and deploy the agent followed by the dashboard |
-
-Cloud Build trigger settings contain the pipeline name, repository event and branch filter. YAML contains ordered `steps`, each with a readable `id`, its builder image `name`, and commands in `args`. Cloud Build uses `steps`; it does not have a `tasks` field. Any failed test, Bandit check, dependency audit or HIGH/CRITICAL image scan stops the pipeline before publication. Each release builds, scans and deploys the same `$BUILD_ID` image tags.
-
-Existing triggers in `ai-log-analyzer-511017`, `us-central1`:
-
-- `log-analyzer-pr-validation`: PR base `^(dev|main)$`, logging-only `log-analyzer-dev-ci` identity.
-- `log-analyzer-dev-push`: push branch `^dev$`, `log-analyzer-dev-build` identity with registry/deployment access.
-
-They use Zein's `github-log-analyzer` repository connection. Work on a personal branch, PR into `dev`, then promote reviewed changes to protected `main`. No production trigger exists. A feature-branch push alone does not deploy; the PR runs validation, and its merge into `dev` deploys automatically.
-
-## Existing GCP settings
-
-| Resource | Name |
-| --- | --- |
-| Project / region | `ai-log-analyzer-511017` / `us-central1` |
-| Artifact Registry | `log-analyzer-dev` |
-| Cloud Run | `log-analyzer-dev`, `log-analyzer-dev-agent` |
-| Raw-log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
-| Firestore | `(default)`; `logs` and `investigations` |
-| Pub/Sub topic | `log-analyzer-dev-investigations` |
-| BigQuery table | `ai-log-analyzer-511017.log_analyzer_dev.incidents` |
-| VPC / subnet | `log-analyzer-dev-vpc` / `log-analyzer-dev-subnet` |
-| Subnet range / region | `10.42.0.0/24` / `us-central1` |
-| Private DNS zone | `log-analyzer-dev-googleapis` |
-
-The YAML `substitutions` configure these resource names, runtime accounts, model, labels and instance limit. Override them on the existing deployment trigger when needed. Attached service accounts authenticate through ADC; no JSON keys or GitHub GCP secrets are needed. Infrastructure and IAM are provisioned separately, not recreated by a release. Both services use Direct VPC egress through `log-analyzer-dev-vpc`, with private Google API access and restricted outbound traffic. IAM controls access to the managed storage and database services.
-
-The dashboard is public; the agent requires IAM authentication. Both services use minimum zero and maximum one instance. The agent also uses concurrency one and a 180-second request deadline. Labels identify the app, development environment, owner and Cloud Build management. Model calls and cloud usage can incur charges; instance limits are not a spending cap.
-
-## App integration
-
-`POST /logs` stores raw content in Storage and metadata in Firestore before publishing `{"log_id":"UUID"}` to the existing topic. Publishing uses the Pub/Sub REST API with attached ADC and a bounded timeout. Raw log text is not placed in the queue.
-
-The agent receives authenticated push at `/pubsub`, reads the raw log, calls Gemini, saves findings to Firestore and loads an incident into BigQuery. `GET /investigations/UUID` exposes status and findings; the dashboard polls while the selected log is running. `POST /investigations/UUID` retries delivery using the saved log ID. Completed or currently processing investigations are not republished through this endpoint. An ambiguous publish can deliver twice; the agent's existing lease/completion checks handle duplicate delivery.
-
-If publication fails, the upload still returns its saved ID with `investigation.status=enqueue_failed`. Retry the investigation, not the upload. Successful publishing records `queued`; the agent then records processing and completion status. Older uploads without dispatch metadata show `waiting`. Automatic Pub/Sub retries/DLQ remain configured by infrastructure. Findings are AI suggestions requiring review. Use synthetic logs without credentials.
+Findings are tentative suggestions. Use synthetic logs without credentials.
 
 ## Open the app
 
 Open the public [Incident Desk dashboard](https://log-analyzer-dev-imm5hb2vlq-uc.a.run.app). Upload a synthetic log, then review its progress and AI findings. The separate agent URL remains authenticated and returns 403 to anonymous requests.
 
+## Incident replay
+
+Upload UTF-8 `.txt`, `.log` or `.jsonl` files (up to 1 MiB), or try one of three built-in scenarios (retry storm, token expiry, payment recovery). Previewing a scenario saves nothing and calls no model.
+
+The replay parser (`dashboard/replay.py`) reads structured text, JSON Lines and Cloud Logging JSON. It builds a timeline and a service map from recorded fields only. A shared trace ID alone does not create a connection, and the first failure shown is not necessarily the root cause. It scans up to 12,000 lines, samples to 1,200 events and maps at most 20 services. Replay makes no model calls.
+
+## Architecture
+
+The dashboard saves the raw log to Cloud Storage and its metadata to Firestore, then publishes only the log ID to Pub/Sub. Pub/Sub pushes it to the private agent, which reads the log, looks up recent BigQuery incidents, makes one Gemini call and writes findings to Firestore and a summary to BigQuery. Both services use Direct VPC egress restricted to Google APIs.
+
+Diagrams: [docs/architecture.md](docs/architecture.md).
+
+## Layout
+
+```
+dashboard/                  public dashboard (WSGI): app.py, storage.py, analytics.py, investigations.py,
+                            replay.py, static/ (UI and demo logs), tests/, Dockerfile, requirements.txt
+agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
+                            deploy-agent.ps1 (one-time bootstrap), smoke-test*.ps1 (live checks)
+evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
+infra/                      scripts/configure-network.ps1, terraform/ (notes, not applied)
+docs/                       architecture.md, api.md, analytics-vpc-handoff.md
+cloudbuild/                 deploy-dev.yaml, pr-validation.yaml (pipelines)
+```
+
 ## Run locally
 
 ```powershell
+cd dashboard
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -c "from wsgiref.simple_server import make_server; from app import application; make_server('127.0.0.1', 8080, application).serve_forever()"
-python -m unittest discover -s tests -v
 ```
 
-Local uploads use SQLite and clearly show that AI is disabled. Cloud Run sets `STORAGE_BACKEND=gcp`, `GOOGLE_CLOUD_PROJECT`, `LOG_BUCKET`, `FIRESTORE_DATABASE`, `FIRESTORE_COLLECTION`, and `INVESTIGATION_TOPIC`. Agent tests require its separate dependencies: install `agent_service/requirements.txt` in a separate virtual environment, then run `python -m unittest discover -s tests -v` from `agent_service`.
+Locally the dashboard uses SQLite (`dashboard/data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild/deploy-dev.yaml`.
 
-See [agent details and the smoke test](agent_service/README.md). [Pub/Sub publishing reference](https://docs.cloud.google.com/pubsub/docs/publisher).
+## Tests
 
-## Analytics and private networking
+| Component | Command | Notes |
+| --- | --- | --- |
+| Dashboard | `cd dashboard && python -m unittest discover -s tests -v` | `dashboard/requirements.txt` |
+| Agent | `cd agent_service && python -m unittest discover -s tests -v` | separate venv with `agent_service/requirements.txt` |
+| Eval scorer and judge | `python -m unittest discover -s evals -v` | needs only `pydantic`; the judge is mocked, no cloud access |
 
-The dashboard includes seven-day BigQuery incident reporting. The ADK agent uses up to five recent matching incidents as context. Both services retain restricted Direct VPC egress and private Google API access. See [the analytics and VPC handoff](infra/Analytics-VPC-handoff.md) for the full data flow and CI/CD variables.
+Security checks, as CI runs them: from `dashboard`, `bandit -q app.py storage.py analytics.py investigations.py replay.py`; from `agent_service`, `bandit -q service.py`.
 
-Both `/investigations/{UUID}` and `/logs/{UUID}/investigation` support status lookup and retry for saved uploads.
+## Golden-log eval
+
+Four synthetic logs in `evals/fixtures/` each have an `.expected.json` with a minimum (and optional maximum) severity and keywords the summary or likely cause must mention. These calls reach Vertex AI and cost money. They need the agent dependencies and `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`.
+
+```
+python evals/golden_logs.py --threshold 0.8
+adk eval evals/adk/log_investigator evals/adk/golden-logs.evalset.json --config_file_path evals/adk/eval-config.json
+```
+
+A fixture passes only if the rule-based scorer passes and a Gemini judge on Vertex AI agrees the findings fit the log and expectations. The judge uses the model set in `evals/adk/eval-config.json`; any judge error counts as a failure. `--no-judge` runs the scorer alone. `golden_logs.py` exits non-zero below the threshold, and a crash counts as a failure. The ADK eval uses rubric-based scoring with a judge model. Regenerate its eval set from the fixtures with `python evals/golden_logs.py --write-adk-evalset`. Neither eval runs in CI yet.
+
+## Endpoints
+
+The dashboard serves the UI and a JSON API. The agent exposes `GET /health` (liveness), `GET /ready` (Firestore, Storage and BigQuery checks) and `POST /pubsub`, all behind IAM. Full list: [docs/api.md](docs/api.md).
+
+## Deployment
+
+| File | Trigger | Does |
+| --- | --- | --- |
+| `cloudbuild/pr-validation.yaml` | PR into `dev` or `main` | tests, Bandit, pip-audit, image build and Trivy scan for both services |
+| `cloudbuild/deploy-dev.yaml` | push to `dev` | same checks, then publish both images and deploy the agent, then the dashboard |
+
+Work on a `zein/...` branch, PR into `dev` (merging deploys), then promote to protected `main`. No production pipeline exists. Mahmoud owns both pipeline files. Runtime identities authenticate through ADC; there are no key files.
+
+## Infrastructure
+
+Project `ai-log-analyzer-511017`, region `us-central1`.
+
+| Resource | Name |
+| --- | --- |
+| Cloud Run | `log-analyzer-dev`, `log-analyzer-dev-agent` |
+| Artifact Registry | `log-analyzer-dev` |
+| Raw-log bucket | `ai-log-analyzer-511017-raw-logs-dev` |
+| Firestore | `(default)`: `logs`, `investigations` |
+| Pub/Sub topic | `log-analyzer-dev-investigations` |
+| BigQuery | `ai-log-analyzer-511017.log_analyzer_dev.incidents`, partitions expire after 7 days |
+
+Terraform state: bucket `ai-log-analyzer-511017-tfstate`, prefix `dev`. Nothing is applied yet; planned changes are in [infra/terraform](infra/terraform/README.md). Details: [agent](agent_service/README.md), [analytics and VPC](docs/analytics-vpc-handoff.md).
+
+## Known gaps
+
+- The dashboard is public and unauthenticated. `GET /logs` lists recent uploads and `GET /logs/{id}` returns any upload's content.
+- No upload rate limit or budget alert. Instance limits cap parallelism, not spend.
+- Identical uploads each trigger a Gemini call; content-hash reuse is planned.
+- Service and category detection (`classify_log`) is keyword-based with three categories. Unmatched logs are `unclassified` and get less history.
+- Agent ingress is `all`; internal-only is documented but not applied.
+- No VPC Service Controls perimeter.
+- Firestore documents and raw logs have no retention cleanup.
+- A crash after the model responds but before findings are saved repeats a paid call.
+- The golden-log evals have not been run against Vertex AI and are not in CI.

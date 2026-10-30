@@ -74,8 +74,7 @@ class GCPLogStore:
         self.project = project
         self.publisher = publish_client
         if topic and self.publisher is None:
-            # Reuse attached ADC; synchronous REST keeps publishing bounded without
-            # background publisher threads or another application dependency.
+            # Synchronous REST with ADC keeps publishing bounded, with no extra dependency.
             import google.auth
             from google.auth.transport.requests import AuthorizedSession
             credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/pubsub"])
@@ -128,15 +127,13 @@ class GCPLogStore:
         metadata = {field: record[field] for field in SUMMARY_FIELDS}
         metadata["object_name"] = object_name
         try:
-            # Publish metadata only after the raw object is durable. Neither write
-            # may overwrite existing data. Cloud cross-service writes are not atomic.
+            # Object first, then metadata; neither overwrites. Not atomic across services.
             self.bucket.blob(object_name).upload_from_string(
                 record["content"].encode("utf-8"), content_type="text/plain; charset=utf-8",
                 if_generation_match=0, timeout=10, retry=None)
             self.collection.document(record["id"]).create(metadata, timeout=10, retry=None)
         except self.cloud_errors as error:
-            # A timed-out Firestore create may actually have committed. Keep the
-            # object so a successful commit can never reference a deleted file.
+            # A timed-out create may have committed, so keep the object.
             raise StorageUnavailable() from error
 
     def list_recent(self):

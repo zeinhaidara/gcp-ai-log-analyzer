@@ -14,6 +14,38 @@ def message(data):
 
 
 class HandlerTests(unittest.TestCase):
+    def test_model_receives_numbered_bounded_source_in_one_call(self):
+        import asyncio
+        from types import SimpleNamespace
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": [], "hypotheses": [{"title": "Candidate", "explanation": "Tentative", "evidence_lines": [1]}]}
+        runner = Mock()
+        captured = {}
+        async def events(**kwargs):
+            captured.update(kwargs)
+            yield SimpleNamespace(is_final_response=lambda: True, content=SimpleNamespace(parts=[SimpleNamespace(text=json.dumps(findings))]))
+        runner.run_async = events
+        sessions = Mock()
+        sessions.create_session = AsyncMock(return_value=SimpleNamespace(id="test-session"))
+        with patch.object(service, "LlmAgent"), patch.object(service, "Runner", return_value=runner), patch.object(service, "InMemorySessionService", return_value=sessions):
+            result = asyncio.run(service.investigate("ERROR " + "x" * service.MAX_MODEL_CHARS + "\nUNSEEN_TAIL", []))
+        payload = json.loads(captured["new_message"].parts[0].text)
+        self.assertTrue(payload["current_log"].startswith("[L1] ERROR"))
+        self.assertNotIn("UNSEEN_TAIL", payload["current_log"])
+        self.assertEqual(captured["run_config"].max_llm_calls, 1)
+        self.assertEqual(result["hypotheses"][0]["evidence_lines"], [1])
+
+    def test_hypothesis_citations_are_bounded_to_supplied_nonempty_log_lines(self):
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": [], "hypotheses": [{"title": "Pool", "explanation": "Candidate", "evidence_lines": [1, 2, 3, 999]}, {"title": "Unsupported", "explanation": "Candidate", "evidence_lines": [999]}]}
+        result = service.grounded_findings(json.dumps(findings), "INFO started\n\nERROR timeout")
+        self.assertEqual(len(result["hypotheses"]), 1)
+        self.assertEqual(result["hypotheses"][0]["evidence_lines"], [1, 3])
+
+    def test_legacy_findings_remain_valid_and_citations_cannot_reach_unseen_tail(self):
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Tentative", "recommendations": []}
+        self.assertEqual(service.grounded_findings(json.dumps(findings), "ERROR timeout")["hypotheses"], [])
+        findings["hypotheses"] = [{"title": "Tail", "explanation": "Not supplied", "evidence_lines": [2]}]
+        self.assertEqual(service.grounded_findings(json.dumps(findings), "x" * service.MAX_MODEL_CHARS + "\nERROR tail")["hypotheses"], [])
+
     def test_classification(self):
         self.assertEqual(service.classify_log("INFO orders started\nERROR database timed out"), ("orders", "database_timeout"))
         self.assertEqual(service.classify_log("ERROR expired_token 401"), ("unknown", "authentication"))
@@ -53,6 +85,81 @@ class HandlerTests(unittest.TestCase):
 
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    def test_health_makes_no_client_calls(self):
+        with patch.object(service, "clients") as clients:
+            self.assertEqual(self.client.get("/health").status_code, 200)
+        clients.assert_not_called()
+
+    def ready(self, db=None, objects=None, analytics=None):
+        trio = service.Clients(db or Mock(), objects or Mock(), analytics or Mock())
+        env = {"LOG_BUCKET": "test-bucket", "BIGQUERY_TABLE": "p.d.incidents"}
+        with patch.object(service, "clients", return_value=trio), patch.dict(service.os.environ, env):
+            return self.client.get("/ready"), trio
+
+    def test_ready_when_all_checks_pass(self):
+        response, (db, objects, analytics) = self.ready()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready", "checks": {"firestore": "ok", "storage": "ok", "bigquery": "ok"}})
+        objects.bucket.assert_called_once_with("test-bucket")
+        objects.bucket.return_value.reload.assert_called_once()
+        objects.bucket.return_value.list_blobs.assert_not_called()
+        analytics.get_table.assert_called_once()
+        analytics.query.assert_not_called()
+
+    def test_ready_reports_one_failure_without_exception_text(self):
+        analytics = Mock()
+        analytics.get_table.side_effect = RuntimeError("secret ai-log-analyzer-511017 credentials")
+        response, _ = self.ready(analytics=analytics)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "not_ready", "checks": {"firestore": "ok", "storage": "ok", "bigquery": "failed"}})
+        self.assertNotIn("secret", response.text)
+        self.assertNotIn("511017", response.text)
+
+    def test_ready_times_out_slow_check(self):
+        import time
+        objects = Mock()
+        objects.bucket.return_value.reload.side_effect = lambda **kwargs: time.sleep(0.5)
+        with patch.object(service, "READY_TIMEOUT", 0.05):
+            response, _ = self.ready(objects=objects)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"], {"firestore": "ok", "storage": "failed", "bigquery": "ok"})
+
+    def test_ready_fails_when_configuration_is_missing(self):
+        with patch.object(service, "clients", return_value=service.Clients(Mock(), Mock(), Mock())), patch.dict(service.os.environ, {}, clear=True):
+            response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["checks"]["storage"], "failed")
+
+    def test_clients_are_built_once_across_threads(self):
+        import threading
+        import time
+        def slow(**kwargs):
+            time.sleep(0.05)
+            return Mock()
+        with patch.object(service, "_clients", None), patch.dict(service.os.environ, {"GOOGLE_CLOUD_PROJECT": "p"}), \
+                patch.object(service.firestore, "Client", side_effect=slow) as db, \
+                patch.object(service.storage, "Client", side_effect=slow) as objects, \
+                patch.object(service.bigquery, "Client", side_effect=slow) as analytics:
+            results = []
+            threads = [threading.Thread(target=lambda: results.append(service.clients())) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(len(results), 8)
+        self.assertTrue(all(result is results[0] for result in results))
+        self.assertEqual((db.call_count, objects.call_count, analytics.call_count), (1, 1, 1))
+        self.assertIsInstance(results[0], service.Clients)
+
+    def test_client_build_failure_is_retried(self):
+        with patch.object(service, "_clients", None), patch.dict(service.os.environ, {}, clear=True):
+            with self.assertRaises(KeyError):
+                service.clients()
+            with patch.dict(service.os.environ, {"GOOGLE_CLOUD_PROJECT": "p"}), \
+                    patch.object(service.firestore, "Client"), patch.object(service.storage, "Client"), \
+                    patch.object(service.bigquery, "Client"):
+                self.assertIsInstance(service.clients(), service.Clients)
 
     def test_ack_after_processing(self):
         with patch.object(service, "process", new=AsyncMock()) as process:

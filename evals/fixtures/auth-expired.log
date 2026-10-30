@@ -1,0 +1,9 @@
+2026-10-27T11:00:00Z INFO accounts started version=2.0.1
+2026-10-27T11:00:04Z INFO accounts request_id=req-2001 GET /profile status=200 user=u-100
+2026-10-27T11:05:10Z WARN accounts request_id=req-2002 token nearing expiry user=u-101
+2026-10-27T11:05:31Z WARN accounts request_id=req-2003 authentication failed reason=expired_token user=u-101
+2026-10-27T11:05:31Z WARN accounts request_id=req-2003 GET /profile status=401
+2026-10-27T11:05:40Z WARN accounts request_id=req-2004 authentication failed reason=expired_token user=u-102
+2026-10-27T11:05:40Z WARN accounts request_id=req-2004 GET /settings status=401
+2026-10-27T11:06:02Z INFO accounts request_id=req-2005 token refreshed user=u-101
+2026-10-27T11:06:03Z INFO accounts request_id=req-2005 GET /profile status=200 user=u-101

@@ -1,6 +1,7 @@
 """Private Pub/Sub handler; Cloud Run IAM authenticates requests."""
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -75,6 +76,31 @@ def clients():
                     firestore.Client(project=project, database=os.getenv("FIRESTORE_DATABASE", "(default)")),
                     storage.Client(project=project), bigquery.Client(project=project))
     return _clients
+
+
+PROMPT_VERSION = "1"  # Bump when the instruction below changes.
+DIAGNOSIS_CACHE_TTL = timedelta(days=7)
+
+
+def diagnosis_cache_key(content):
+    return hashlib.sha256((MODEL + PROMPT_VERSION + content).encode("utf-8")).hexdigest()
+
+
+def cached_diagnosis(db, key):
+    doc = db.collection("diagnosis_cache").document(key).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    expires_at = data.get("expires_at")
+    if expires_at is None or expires_at <= datetime.now(timezone.utc):
+        return None
+    return data.get("findings")
+
+
+def cache_diagnosis(db, key, findings):
+    now = datetime.now(timezone.utc)
+    db.collection("diagnosis_cache").document(key).set(
+        {"findings": findings, "created_at": now, "expires_at": now + DIAGNOSIS_CACHE_TTL})
 
 
 async def investigate(content, history=None):
@@ -215,8 +241,15 @@ async def process(log_id):
             except Exception:
                 history_available = False
                 logging.warning("Historical incident lookup unavailable for log_id=%s", log_id)
-            findings = await asyncio.wait_for(investigate(content, history), timeout=100)
+            cache_key = diagnosis_cache_key(content) if not history else None
+            findings = await asyncio.to_thread(cached_diagnosis, db, cache_key) if cache_key else None
+            reused = findings is not None
+            if not reused:
+                findings = await asyncio.wait_for(investigate(content, history), timeout=100)
+                if cache_key:
+                    await asyncio.to_thread(cache_diagnosis, db, cache_key, findings)
             completed_at, model = datetime.now(timezone.utc).isoformat(), MODEL
+            logging.info("Investigation findings for log_id=%s reused=%s", log_id, reused)
             await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,
                                     {"findings": findings, "completed_at": completed_at,
                                      "truncated": len(content) > MAX_MODEL_CHARS, "model": model,

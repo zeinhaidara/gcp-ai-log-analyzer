@@ -133,6 +133,30 @@ class HandlerTests(unittest.TestCase):
         cache_write.assert_not_called()
         model.assert_awaited_once()
 
+    def test_cache_read_failure_still_runs_the_model_and_saves_findings(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
+        captured = {}
+        def save_if_owned(transaction, ref, owner, values):
+            captured.update(values)
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[]), patch.object(service, "cached_diagnosis", side_effect=RuntimeError("secret ai-log-analyzer-511017 credentials")), patch.object(service, "cache_diagnosis"), patch.object(service, "investigate", new=AsyncMock(return_value=findings)) as model, patch.object(service, "save_if_owned", side_effect=save_if_owned), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        model.assert_awaited_once()
+        self.assertEqual(captured["findings"], findings)
+
+    def test_cache_write_failure_still_completes_the_investigation(self):
+        import asyncio
+        db, objects, analytics = self.cache_setup()
+        findings = {"severity": "error", "summary": "Timeout", "likely_cause": "Unknown", "recommendations": []}
+        statuses = []
+        def save_if_owned(transaction, ref, owner, values):
+            if "status" in values:
+                statuses.append(values["status"])
+        with patch.object(service, "clients", return_value=(db, objects, analytics)), patch.object(service, "claim", return_value={}), patch.object(service, "historical_incidents", return_value=[]), patch.object(service, "cached_diagnosis", return_value=None), patch.object(service, "cache_diagnosis", side_effect=RuntimeError("secret ai-log-analyzer-511017 credentials")), patch.object(service, "investigate", new=AsyncMock(return_value=findings)), patch.object(service, "save_if_owned", side_effect=save_if_owned), patch.object(service, "export_analytics"), patch.dict(service.os.environ, {"LOG_BUCKET": "test-bucket"}):
+            asyncio.run(service.process(LOG_ID))
+        self.assertEqual(statuses[-1], "completed")
+
     def test_history_query_is_parameterized_bounded_and_truncated(self):
         from types import SimpleNamespace
         analytics = Mock()

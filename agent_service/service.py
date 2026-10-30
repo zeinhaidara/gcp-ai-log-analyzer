@@ -242,12 +242,20 @@ async def process(log_id):
                 history_available = False
                 logging.warning("Historical incident lookup unavailable for log_id=%s", log_id)
             cache_key = diagnosis_cache_key(content) if not history else None
-            findings = await asyncio.to_thread(cached_diagnosis, db, cache_key) if cache_key else None
+            findings = None
+            if cache_key:
+                try:
+                    findings = await asyncio.to_thread(cached_diagnosis, db, cache_key)
+                except Exception as error:
+                    logging.warning("Diagnosis cache read failed for log_id=%s: %s", log_id, type(error).__name__)
             reused = findings is not None
             if not reused:
                 findings = await asyncio.wait_for(investigate(content, history), timeout=100)
                 if cache_key:
-                    await asyncio.to_thread(cache_diagnosis, db, cache_key, findings)
+                    try:
+                        await asyncio.to_thread(cache_diagnosis, db, cache_key, findings)
+                    except Exception as error:
+                        logging.warning("Diagnosis cache write failed for log_id=%s: %s", log_id, type(error).__name__)
             completed_at, model = datetime.now(timezone.utc).isoformat(), MODEL
             logging.info("Investigation findings for log_id=%s reused=%s", log_id, reused)
             await asyncio.to_thread(save_if_owned, db.transaction(), ref, owner,

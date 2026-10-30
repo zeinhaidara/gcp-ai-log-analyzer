@@ -29,7 +29,7 @@ agent_service/              agent: service.py, tests/, Dockerfile, bigquery-sche
 evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
 infra/                      scripts/configure-network.ps1, terraform/ (notes, not applied)
 docs/                       architecture.md, api.md, analytics-vpc-handoff.md
-cloudbuild.yaml, cloudbuild-ci.yaml   pipelines
+cloudbuild/                 deploy-dev.yaml, pr-validation.yaml (pipelines)
 ```
 
 ## Run locally
@@ -42,7 +42,7 @@ pip install -r requirements.txt
 python -c "from wsgiref.simple_server import make_server; from app import application; make_server('127.0.0.1', 8080, application).serve_forever()"
 ```
 
-Locally the dashboard uses SQLite (`dashboard/data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild.yaml`.
+Locally the dashboard uses SQLite (`dashboard/data/logs.db`) and shows AI as disabled. Cloud Run sets `STORAGE_BACKEND=gcp` and the resource variables in `cloudbuild/deploy-dev.yaml`.
 
 ## Tests
 
@@ -73,8 +73,8 @@ The dashboard serves the UI and a JSON API. The agent exposes `GET /health` (liv
 
 | File | Trigger | Does |
 | --- | --- | --- |
-| `cloudbuild-ci.yaml` | PR into `dev` or `main` | tests, Bandit, pip-audit, image build and Trivy scan for both services |
-| `cloudbuild.yaml` | push to `dev` | same checks, then publish both images and deploy the agent, then the dashboard |
+| `cloudbuild/pr-validation.yaml` | PR into `dev` or `main` | tests, Bandit, pip-audit, image build and Trivy scan for both services |
+| `cloudbuild/deploy-dev.yaml` | push to `dev` | same checks, then publish both images and deploy the agent, then the dashboard |
 
 Work on a `zein/...` branch, PR into `dev` (merging deploys), then promote to protected `main`. No production pipeline exists. Mahmoud owns both pipeline files. Runtime identities authenticate through ADC; there are no key files.
 

@@ -89,7 +89,7 @@ BigQuery data access are required.
 
 ## CI/CD settings for Mahmoud
 
-`cloudbuild.yaml` now preserves Direct VPC settings and passes the BigQuery environment.
+`cloudbuild/deploy-dev.yaml` now preserves Direct VPC settings and passes the BigQuery environment.
 Keep the existing release service account, security gates and immutable build-ID image
 tags. Both YAML files include `analytics.py` in Bandit scanning.
 
@@ -108,7 +108,7 @@ New trigger substitutions (resource names, not secrets):
 
 The dashboard environment also needs `BIGQUERY_LOCATION=us-central1` and
 `INVESTIGATION_TOPIC=log-analyzer-dev-investigations`; both are passed by Cloud Build.
-Routine agent releases go through `cloudbuild.yaml`. `agent_service/deploy-agent.ps1 -Tag UNIQUE_TAG` is the
+Routine agent releases go through `cloudbuild/deploy-dev.yaml`. `agent_service/deploy-agent.ps1 -Tag UNIQUE_TAG` is the
 one-time bootstrap: it applies the additive schema, preserves VPC egress and keeps authenticated Pub/Sub push.
 Both pipeline files now test, audit, build and scan the dashboard and agent independently.
 The dev release deploys the private agent before the public dashboard using the same build ID.

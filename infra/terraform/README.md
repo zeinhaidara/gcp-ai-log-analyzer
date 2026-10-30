@@ -34,7 +34,7 @@ resource "google_cloud_run_v2_service" "agent" {
   name     = "log-analyzer-dev-agent"
   location = "us-central1"
   ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
-  # remaining settings as deployed by cloudbuild.yaml
+  # remaining settings as deployed by cloudbuild/deploy-dev.yaml
 }
 ```
 
@@ -46,4 +46,4 @@ gcloud run services update log-analyzer-dev-agent --region us-central1 --project
 
 Rollback: the same command with `--ingress all`.
 
-CI: add `--ingress=internal` to the `deploy-agent` step in `cloudbuild.yaml` so every release states it explicitly (owner: Mahmoud).
+CI: add `--ingress=internal` to the `deploy-agent` step in `cloudbuild/deploy-dev.yaml` so every release states it explicitly (owner: Mahmoud).

@@ -19,6 +19,25 @@ The dashboard saves the raw log to Cloud Storage and its metadata to Firestore, 
 
 Diagrams: [docs/architecture.md](docs/architecture.md).
 
+## Application data flow
+
+```mermaid
+flowchart LR
+    User --> Dashboard[Public Cloud Run dashboard]
+    Dashboard --> GCS[Cloud Storage raw logs]
+    Dashboard --> FS[Firestore metadata]
+    Dashboard --> Topic[Pub/Sub log ID]
+    Topic --> Agent[IAM-protected Cloud Run agent]
+    GCS --> Agent
+    BQ[BigQuery incident history] --> Agent
+    Agent --> Gemini[Gemini on Vertex AI]
+    Agent --> FS
+    Agent --> BQ
+    FS --> Dashboard
+```
+
+**Validation level: run on real cloud (dev).** The agent README records a completed synthetic end-to-end investigation. Unit tests use fakes; golden-log model evals have not been run. The public dashboard remains unauthenticated with no upload rate limit or budget alert.
+
 ## Layout
 
 ```
@@ -27,7 +46,7 @@ dashboard/                  public dashboard (WSGI): app.py, storage.py, analyti
 agent_service/              agent: service.py, tests/, Dockerfile, bigquery-schema.json,
                             deploy-agent.ps1 (one-time bootstrap), smoke-test*.ps1 (live checks)
 evals/                      golden-log eval: fixtures/, golden_logs.py, test_golden_logs.py, adk/
-infra/                      scripts/configure-network.ps1, terraform/ (notes, not applied)
+infra/                      scripts/configure-network.ps1, terraform/ (configuration, not applied)
 docs/                       architecture.md, api.md, analytics-vpc-handoff.md
 cloudbuild/                 deploy-dev.yaml, pr-validation.yaml (pipelines)
 ```
@@ -69,6 +88,8 @@ A fixture passes only if the rule-based scorer passes and a Gemini judge on Vert
 
 The dashboard serves the UI and a JSON API. The agent exposes `GET /health` (liveness), `GET /ready` (Firestore, Storage and BigQuery checks) and `POST /pubsub`, all behind IAM. Full list: [docs/api.md](docs/api.md).
 
+GitHub Actions `Validate` runs service tests, Bandit and dependency audits on PRs to `dev`/`main`. Cloud Build remains the image build, scan and deployment pipeline.
+
 ## Deployment
 
 | File | Trigger | Does |
@@ -93,13 +114,18 @@ Project `ai-log-analyzer-511017`, region `us-central1`.
 
 Terraform state: bucket `ai-log-analyzer-511017-tfstate`, prefix `dev`. Nothing is applied yet; planned changes are in [infra/terraform](infra/terraform/README.md). Details: [agent](agent_service/README.md), [analytics and VPC](docs/analytics-vpc-handoff.md).
 
+## Team
+
+- **Moulaye Zein Haidara (Zein):** ADK investigation service and agent integration.
+- **Mahmoud Hachem (`mhachem110`):** dashboard and Cloud Build pipelines. Existing authorship and pipeline ownership are retained.
+
 ## Known gaps
 
 - The dashboard is public and unauthenticated. `GET /logs` lists recent uploads and `GET /logs/{id}` returns any upload's content.
 - No upload rate limit or budget alert. Instance limits cap parallelism, not spend.
 - Identical uploads each trigger a Gemini call; content-hash reuse is planned.
 - Service and category detection (`classify_log`) is keyword-based with three categories. Unmatched logs are `unclassified` and get less history.
-- Agent ingress is `all`; internal-only is documented but not applied.
+- Terraform now requests internal-only agent ingress; this change has not been applied. The last documented deployment uses ingress `all` with IAM authentication.
 - No VPC Service Controls perimeter.
 - Firestore documents and raw logs have no retention cleanup.
 - A crash after the model responds but before findings are saved repeats a paid call.

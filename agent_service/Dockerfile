@@ -1,4 +1,5 @@
 FROM python:3.12-alpine
+RUN apk upgrade --no-cache
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY requirements.txt .

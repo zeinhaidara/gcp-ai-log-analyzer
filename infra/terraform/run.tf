@@ -137,7 +137,7 @@ resource "google_cloud_run_v2_service" "agent" {
   deletion_protection  = true
   description          = null
   iap_enabled          = false
-  ingress              = "INGRESS_TRAFFIC_ALL"
+  ingress              = "INGRESS_TRAFFIC_INTERNAL_ONLY"
   invoker_iam_disabled = false
   labels               = {}
   launch_stage         = "GA"

@@ -1,4 +1,5 @@
 FROM python:3.12-alpine
+RUN apk upgrade --no-cache
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8080 DATABASE_PATH=/app/data/logs.db
 WORKDIR /app
 COPY requirements.txt .
